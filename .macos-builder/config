@@ -1,0 +1,21 @@
+# Declarative build config read by stuffbucket/macos-builder at build time.
+# Every value here is untrusted client input to the builder: it is regex-validated
+# and then gated against clients/stuffbucket/foodtruck.policy, which is owned by
+# the builder and can only be changed via an approved build-config issue.
+#
+# `entitlements` must be one of the builder's ENUMERATED profiles
+# (default | network | virtualization | bun-runtime) — a client can never supply
+# an arbitrary entitlements path. FoodTruck needs no added capabilities, so
+# `default` (hardened runtime only) is correct.
+#
+# `dmg_name` lets the client declare the artifact filename directly, so we get a
+# versioned name straight from the builder. {version} is the tag minus the
+# leading "v". Without it the builder would emit "<volname>.dmg" and we'd have to
+# rename it on the draft afterwards, the way maximal does.
+
+app_path     = dist/FoodTruck.app
+volname      = FoodTruck
+bundle_id    = co.stuffbucket.foodtruck
+entitlements = default
+artifact     = dmg
+dmg_name     = foodtruck-{version}-darwin-arm64.dmg

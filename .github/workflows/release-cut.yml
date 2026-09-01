@@ -1,0 +1,215 @@
+# Cut a release: push a release/vX.Y.Z branch, get a signed .dmg on a DRAFT release.
+#
+#   git switch -c release/v0.1.0 main
+#   git push -u origin release/v0.1.0
+#
+# This workflow builds NOTHING itself and runs only on ubuntu-latest. The macOS
+# app is built, signed, notarized and stapled by the PRIVATE stuffbucket/macos-builder
+# repo, which owns the only self-hosted macOS runner and all Apple secrets. This
+# repo is public and must never reference a self-hosted or macOS runner.
+#
+# WHY THE RELEASE STAYS A DRAFT
+#   GitHub immutable releases reject attaching assets AFTER publish (HTTP 422).
+#   The builder uploads onto the still-mutable draft. Publishing is a deliberate
+#   human step afterwards.
+#
+# WHY A TAG AND NOT JUST THE BRANCH
+#   The builder checks the client out at a TAG (its `ref` input is tag-shaped),
+#   and a GitHub draft release does not create its tag until published — so the
+#   tag must exist first, pointing at the commit being released.
+
+name: Cut release
+
+on:
+  push:
+    branches:
+      - 'release/v*'
+
+# Least privilege: push a tag + create a draft release in THIS repo. Nothing
+# cross-repo uses this token — the builder dispatch uses MACOS_BUILDER_PAT and
+# the builder writes back with its own short-lived app-repoman token.
+permissions:
+  contents: write
+
+# Never run two cuts for the same branch at once, and never cancel one in
+# flight — a cut interrupted mid-notarization leaves a half-built draft.
+concurrency:
+  group: release-cut-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the "is this on main?" ancestry check is meaningful.
+          fetch-depth: 0
+          # The tag is created through the REST API below rather than `git push`,
+          # so no git credential ever needs to be written to .git/config.
+          persist-credentials: false
+
+      # github.ref_name is attacker-influenced in principle (it is a branch name),
+      # so it is passed via env and never interpolated into a run: body.
+      - name: Resolve and validate the version
+        id: v
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="${BRANCH#release/}"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Branch '${BRANCH}' does not name a semver release." >&2
+            echo "::error::Expected release/vX.Y.Z or release/vX.Y.Z-prerelease." >&2
+            exit 1
+          fi
+          {
+            echo "tag=${TAG}"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Cutting ${TAG}"
+
+      # The definition of done is "builds from main". Requiring the release
+      # commit to be contained in origin/main means released code went through
+      # the require-PR ruleset on main; it cannot be smuggled in on a side branch.
+      # Ancestry (not equality) so main may move on after the cut.
+      - name: Assert the release commit is on main
+        run: |
+          set -euo pipefail
+          # fetch-depth: 0 already fetched every branch; this is belt-and-braces
+          # and works unauthenticated because the repo is public.
+          git fetch --no-tags origin main || true
+          if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
+            echo "::error::Could not resolve origin/main to verify the release commit." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::HEAD ($(git rev-parse --short HEAD)) is not contained in origin/main." >&2
+            echo "::error::Cut release branches from main: git switch -c ${GITHUB_REF_NAME} main" >&2
+            exit 1
+          fi
+          echo "HEAD $(git rev-parse --short HEAD) is on main."
+
+      - name: Refuse if the tag already exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists. Bump the version or delete the tag." >&2
+            exit 1
+          fi
+
+      # Created via the REST API, not `git push`, so this job never needs a
+      # persisted git credential. Two calls make it a real ANNOTATED tag (an
+      # object with a message + tagger), which lightweight refs cannot carry.
+      - name: Create the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f "tag=${TAG}" \
+            -f "message=Release ${TAG}" \
+            -f "object=${GITHUB_SHA}" \
+            -f "type=commit" \
+            --jq .sha)"
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" \
+            -f "sha=${TAG_SHA}" >/dev/null
+          echo "Tagged ${GITHUB_SHA} as ${TAG}."
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists — reusing it."
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --generate-notes
+            echo "Created DRAFT release ${TAG}."
+          fi
+
+      # Fire the private builder and wait for the signed artifact to land on the
+      # draft. MACOS_BUILDER_PAT is a fine-grained PAT whose ONLY power is
+      # Actions: write on stuffbucket/macos-builder — it cannot read this repo's
+      # secrets or reach any other repo. GitHub never exposes it to fork PRs, and
+      # this workflow has no pull_request trigger at all.
+      #
+      # The step is guarded on the secret being present so an expired or rotated
+      # PAT degrades to an actionable notice instead of failing the whole cut.
+      - name: Build the signed .dmg on stuffbucket/macos-builder
+        env:
+          BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="foodtruck-${VERSION}-darwin-arm64.dmg"
+
+          if [ -z "${BUILDER_PAT:-}" ]; then
+            echo "::notice::Draft ${TAG} created, but MACOS_BUILDER_PAT is not set, so the signed build was not started."
+            echo "Start it manually with:"
+            echo "  gh workflow run build.yml --repo stuffbucket/macos-builder \\"
+            echo "     -f repo=${GITHUB_REPOSITORY} -f ref=${TAG}"
+            exit 0
+          fi
+
+          has_asset() {
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' 2>/dev/null | grep -Fxq "$1"
+          }
+
+          if has_asset "$DMG"; then
+            echo "${DMG} is already attached — nothing to do."
+            exit 0
+          fi
+
+          echo "Dispatching stuffbucket/macos-builder for ${GITHUB_REPOSITORY} at ${TAG}…"
+          GH_TOKEN="$BUILDER_PAT" gh workflow run build.yml \
+            --repo stuffbucket/macos-builder \
+            --ref main \
+            -f "repo=${GITHUB_REPOSITORY}" \
+            -f "ref=${TAG}"
+
+          # Sign + notarize + staple takes a few minutes; Apple's notary service
+          # dominates and is variable. ~30 min cap.
+          echo "Waiting for ${DMG} on the draft…"
+          for i in $(seq 1 40); do
+            sleep 45
+            if has_asset "$DMG"; then
+              echo "${DMG} landed after ~$((i * 45))s."
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                --jq '.assets[] | "  \(.name)  \(.size) bytes"'
+              exit 0
+            fi
+          done
+
+          echo "::error::Timed out waiting for ${DMG} on the ${TAG} draft." >&2
+          echo "::error::Check the run at https://github.com/stuffbucket/macos-builder/actions" >&2
+          echo "::error::The release stays a DRAFT — it is never published without the signed build." >&2
+          exit 1
+
+      - name: Summary
+        if: always()
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          {
+            echo "### Cut ${TAG}"
+            echo ""
+            echo "- Tag \`${TAG}\` pushed at \`${GITHUB_SHA}\`"
+            echo "- Release created as a **draft** (never auto-published)"
+            echo "- Review it, then publish manually when you are happy"
+          } >> "$GITHUB_STEP_SUMMARY"

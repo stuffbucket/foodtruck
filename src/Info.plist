@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>FoodTruck</string>
+	<!-- Must equal bundle_id_allowed in clients/stuffbucket/foodtruck.policy,
+	     and bundle_id in .macos-builder/config. The builder rejects a mismatch. -->
+	<key>CFBundleIdentifier</key>
+	<string>co.stuffbucket.foodtruck</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>FoodTruck</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- Placeholders. .macos-builder/build.sh stamps both from the release tag
+	     and then asserts the stamp took. -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.0.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
