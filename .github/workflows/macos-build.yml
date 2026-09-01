@@ -1,0 +1,85 @@
+# Manual dispatcher / recovery tool for the private macOS builder.
+#
+# Use this to (re)build the signed .dmg for a tag whose DRAFT release already
+# exists — e.g. the builder run failed, the notary service timed out, or the
+# cut workflow was interrupted. The normal path is release-cut.yml, which does
+# this automatically when you push a release/vX.Y.Z branch.
+#
+# Like every workflow here this runs on ubuntu-latest and builds nothing itself.
+#
+# NOTE: there is deliberately NO `release: published` trigger. Immutable
+# releases reject asset uploads after publish (HTTP 422), so a build fired on
+# publish could never attach its artifact. Builds happen while the release is
+# still a mutable draft.
+
+name: macOS signed build (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Dispatch stuffbucket/macos-builder
+        env:
+          BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch input is untrusted: validate before use, and never
+          # interpolate it into this script body (it arrives via env).
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::'${TAG}' is not a vX.Y.Z tag." >&2
+            exit 1
+          fi
+
+          if [ -z "${BUILDER_PAT:-}" ]; then
+            echo "::error::MACOS_BUILDER_PAT is not set on this repo." >&2
+            echo "::error::Either add it, or dispatch by hand:" >&2
+            echo "::error::  gh workflow run build.yml --repo stuffbucket/macos-builder -f repo=${GITHUB_REPOSITORY} -f ref=${TAG}" >&2
+            exit 1
+          fi
+
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::No release exists for ${TAG}. The builder uploads onto an existing draft." >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          DMG="foodtruck-${VERSION}-darwin-arm64.dmg"
+
+          echo "Dispatching stuffbucket/macos-builder for ${GITHUB_REPOSITORY} at ${TAG}…"
+          GH_TOKEN="$BUILDER_PAT" gh workflow run build.yml \
+            --repo stuffbucket/macos-builder \
+            --ref main \
+            -f "repo=${GITHUB_REPOSITORY}" \
+            -f "ref=${TAG}"
+
+          echo "Waiting for ${DMG} on the ${TAG} release…"
+          for i in $(seq 1 40); do
+            sleep 45
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                 --jq '.assets[].name' 2>/dev/null | grep -Fxq "$DMG"; then
+              echo "${DMG} landed after ~$((i * 45))s."
+              exit 0
+            fi
+          done
+
+          echo "::error::Timed out waiting for ${DMG}. See https://github.com/stuffbucket/macos-builder/actions" >&2
+          exit 1

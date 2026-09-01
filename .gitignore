@@ -1,0 +1,6 @@
+# Producer output — rebuilt from the tag on every build, never committed.
+dist/
+.DS_Store
+
+# Personal Claude Code settings — local only, never shared.
+.claude/settings.local.json

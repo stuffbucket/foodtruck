@@ -1,0 +1,173 @@
+# CI guardrails.
+#
+# These checks exist to make this repo's SECURITY INVARIANTS unbreakable by
+# accident, not to lint style. Each one encodes a decision that would otherwise
+# survive only as a comment somebody eventually deletes:
+#
+#   1. No privileged triggers. Secrets are withheld from fork-PR workflows —
+#      that is the single rule keeping MACOS_BUILDER_PAT away from forks. The
+#      pull_request_target and workflow_run triggers opt OUT of that protection
+#      and run with secrets in the base-repo context. If one ever appears here,
+#      fail loudly.
+#   2. No macOS or self-hosted runners. This repo is public. GitHub's guidance
+#      is that self-hosted runners "should almost never be used for public
+#      repositories" — a fork PR could execute code on the machine holding the
+#      Apple signing keys. All macOS work belongs in the private builder.
+#   3. The producer and config must stay valid, because a mistake there is only
+#      discovered ~15 minutes into a signing run on a machine we cannot debug.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # CI only reads the tree; leaving the token in .git/config would let any
+          # later step (or a leaked artifact) reuse it.
+          persist-credentials: false
+
+      # Anchored to start-of-line so these greps cannot match themselves.
+      - name: No privileged triggers
+        run: |
+          set -euo pipefail
+          if grep -rEn '^[[:space:]]*(pull_request_target|workflow_run):' .github/workflows/; then
+            echo "::error::pull_request_target / workflow_run run with secrets in the base-repo context." >&2
+            echo "::error::They would expose MACOS_BUILDER_PAT to fork-PR code. Not permitted here." >&2
+            exit 1
+          fi
+          echo "OK — no privileged triggers."
+
+      - name: No macOS or self-hosted runners
+        run: |
+          set -euo pipefail
+          if grep -rEn '^[[:space:]]*runs-on:.*(macos|self-hosted)' .github/workflows/; then
+            echo "::error::This public repo must not reference a macOS or self-hosted runner." >&2
+            echo "::error::All signing happens in the private stuffbucket/macos-builder." >&2
+            exit 1
+          fi
+          echo "OK — every job runs on GitHub-hosted Linux."
+
+      - name: No Apple credentials
+        run: |
+          set -euo pipefail
+          if grep -rEn 'secrets\.(APPLE_|KEYCHAIN_|DEVELOPER_ID_|PRIVATE_KEY)' .github/workflows/; then
+            echo "::error::Apple signing material must never be referenced from this public repo." >&2
+            exit 1
+          fi
+          echo "OK — no Apple credentials referenced."
+
+      - name: Lint the producer
+        run: |
+          set -euo pipefail
+          shellcheck --severity=warning .macos-builder/build.sh
+          echo "OK — shellcheck clean."
+
+      # Mirrors the builder's own validation (build.yml "Parse + validate client
+      # config" + "Enforce per-repo policy") so a bad config fails here in
+      # seconds instead of on the signing Mac minutes in.
+      - name: Validate .macos-builder/config
+        run: |
+          set -euo pipefail
+          CONFIG=.macos-builder/config
+          test -f "$CONFIG" || { echo "::error::missing $CONFIG" >&2; exit 1; }
+
+          get() {
+            sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//' "$CONFIG" \
+              | grep -E "^$1[[:space:]]*=" | head -1 \
+              | sed -E "s/^$1[[:space:]]*=[[:space:]]*//"
+          }
+
+          app_path="$(get app_path)"; volname="$(get volname)"
+          bundle_id="$(get bundle_id)"; entitlements="$(get entitlements)"
+          artifact="$(get artifact)"
+
+          for k in app_path volname bundle_id entitlements; do
+            eval "v=\$$k"
+            [ -n "$v" ] || { echo "::error::config is missing required key '$k'" >&2; exit 1; }
+          done
+
+          case "$app_path" in
+            /*)   echo "::error::app_path must be relative" >&2; exit 1 ;;
+            *..*) echo "::error::app_path must not contain '..'" >&2; exit 1 ;;
+            *.app) ;;
+            *)    echo "::error::app_path must end in .app" >&2; exit 1 ;;
+          esac
+
+          # The builder offers exactly these profiles; a client picks one BY NAME
+          # and can never supply an arbitrary entitlements path.
+          case "$entitlements" in
+            default|network|virtualization|bun-runtime) ;;
+            *) echo "::error::entitlements '$entitlements' is not an enumerated builder profile" >&2; exit 1 ;;
+          esac
+
+          for a in $(printf '%s' "${artifact:-dmg}" | tr ',' ' '); do
+            case "$a" in
+              dmg|pkg|updater) ;;
+              *) echo "::error::artifact '$a' is not one of dmg,pkg,updater" >&2; exit 1 ;;
+            esac
+          done
+
+          # Must equal bundle_id_allowed in the builder-side policy.
+          [ "$bundle_id" = "co.stuffbucket.foodtruck" ] || {
+            echo "::error::bundle_id '$bundle_id' != co.stuffbucket.foodtruck (policy would reject)" >&2; exit 1; }
+
+          echo "OK — config valid (app_path=$app_path volname=$volname entitlements=$entitlements artifact=${artifact:-dmg})."
+
+      - name: Validate Info.plist
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import plistlib, sys
+          with open("src/Info.plist", "rb") as fh:
+              pl = plistlib.load(fh)
+          expected = {
+              "CFBundleIdentifier": "co.stuffbucket.foodtruck",
+              "CFBundleExecutable": "FoodTruck",
+              "CFBundlePackageType": "APPL",
+              "NSPrincipalClass": "NSApplication",
+          }
+          bad = [f"{k}={pl.get(k)!r} (want {v!r})" for k, v in expected.items() if pl.get(k) != v]
+          missing = [k for k in ("CFBundleShortVersionString", "CFBundleVersion",
+                                 "LSMinimumSystemVersion") if k not in pl]
+          if bad or missing:
+              for b in bad:
+                  print(f"::error::Info.plist {b}")
+              for m in missing:
+                  print(f"::error::Info.plist missing {m}")
+              sys.exit(1)
+          print("OK — Info.plist valid.")
+          PY
+
+  # Static analysis for GitHub Actions specifically: pwn-request patterns,
+  # template injection into run: bodies, unpinned actions, over-broad
+  # permissions. Catches the classes of bug the greps above cannot.
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # CI only reads the tree; leaving the token in .git/config would let any
+          # later step (or a leaked artifact) reuse it.
+          persist-credentials: false
+      - name: Run zizmor
+        run: |
+          set -euo pipefail
+          pipx install zizmor
+          zizmor --pedantic --format plain .github/workflows/
