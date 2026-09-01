@@ -25,11 +25,9 @@ on:
     branches:
       - 'release/v*'
 
-# Least privilege: push a tag + create a draft release in THIS repo. Nothing
-# cross-repo uses this token — the builder dispatch uses MACOS_BUILDER_PAT and
-# the builder writes back with its own short-lived app-repoman token.
-permissions:
-  contents: write
+# Deny by default at the workflow level; the one job that needs a write scope
+# grants it to itself. Keeps the blast radius of any future job at zero.
+permissions: {}
 
 # Never run two cuts for the same branch at once, and never cancel one in
 # flight — a cut interrupted mid-notarization leaves a half-built draft.
@@ -39,8 +37,15 @@ concurrency:
 
 jobs:
   cut:
+    name: Cut release
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      # Create the tag ref and the draft release in THIS repo. Nothing
+      # cross-repo uses this token: the builder dispatch authenticates with
+      # MACOS_BUILDER_PAT, and the builder writes back with its own
+      # short-lived app-repoman installation token.
+      contents: write # create the tag ref + draft release in this repo only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

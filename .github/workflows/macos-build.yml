@@ -22,8 +22,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: macos-build-${{ inputs.tag }}
@@ -31,8 +30,13 @@ concurrency:
 
 jobs:
   trigger:
+    name: Dispatch builder
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      # Read-only: this job only reads the release to confirm the tag exists
+      # and to poll for the uploaded artifact.
+      contents: read
     steps:
       - name: Dispatch stuffbucket/macos-builder
         env:
