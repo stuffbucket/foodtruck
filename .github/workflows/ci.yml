@@ -24,8 +24,7 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,8 +32,11 @@ concurrency:
 
 jobs:
   guardrails:
+    name: Security guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read  # read the tree to lint it; nothing else
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,8 +160,11 @@ jobs:
   # template injection into run: bodies, unpinned actions, over-broad
   # permissions. Catches the classes of bug the greps above cannot.
   zizmor:
+    name: Actions static analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read  # read the workflows to audit them; nothing else
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
