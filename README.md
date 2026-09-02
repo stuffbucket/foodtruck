@@ -149,23 +149,35 @@ codesign --verify --deep --strict --verbose=2 /Volumes/FoodTruck/FoodTruck.app
 
 ## Why `updater` is requested
 
-`artifact = dmg,updater`. The tarball is not (yet) consumed by an auto-updater —
-it is requested because the updater path is the **only** one that staples the
+`artifact = dmg,updater`. The tarball is not consumed by an auto-updater — it is
+requested because the updater path is the **only** one that staples the
 notarization ticket *into the `.app` bundle*. The builder gates
-`xcrun stapler staple "$APP"` on the updater being requested, so a dmg-only
-build ships an app that is notarized but carries no local ticket:
+`xcrun stapler staple "$APP"` on the updater being requested.
 
-```
-$ xcrun stapler validate FoodTruck.app     # dmg-only build
-FoodTruck.app does not have a ticket stapled to it.
-```
+**Read the scope carefully — this does not staple the app inside the dmg.**
+The builder creates the dmg *before* the updater block runs, so the dmg is built
+from the pre-staple bundle. Measured on v0.1.1, which requests both artifacts:
 
-That is harmless for dmg distribution — the dmg itself is stapled and Gatekeeper
-verifies online on first launch — but an app dragged out of the dmg then depends
-on reaching Apple, and an updater that swaps a bundle in place wants the ticket
-present locally. Requesting `updater` gets the app stapled at no extra
-notarization cost: `stapler` fetches the ticket by cdhash, which the dmg
-submission already registered.
+| Copy of `FoodTruck.app` | `xcrun stapler validate` |
+| --- | --- |
+| from `foodtruck-0.1.1-darwin-arm64.app.tar.gz` | `The validate action worked!` |
+| from inside `foodtruck-0.1.1-darwin-arm64.dmg` | `does not have a ticket stapled to it` |
+
+Both are the same code — identical `CDHash=cdd3948d880907d2f4ad019c04f27c5018a96a08`.
+The only difference is the stapled ticket, which lands in `Contents/CodeResources`
+in the tarball copy and is absent from the dmg copy.
+
+So:
+
+- **dmg distribution** — the *dmg* is stapled, which is Apple's documented pattern.
+  An app dragged out of it has no local ticket and Gatekeeper verifies online on
+  first launch. Requesting `updater` does **not** change this.
+- **updater distribution** — the tarball's app carries its own ticket and
+  validates offline, which is what matters when an updater swaps a bundle in
+  place.
+
+Getting a stapled app *inside the dmg* would require notarizing the app before
+building the dmg — two notary round-trips per release rather than one.
 
 The tarball also carries a detached Ed25519 (minisign) `.sig`, so it has two
 independent trust layers: Apple notarization and the builder's own signing key.
