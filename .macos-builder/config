@@ -16,11 +16,15 @@
 #
 # `updater` is requested for a specific reason: it is the ONLY artifact whose
 # path staples the notarization ticket INTO the .app bundle. package-macos.sh
-# gates `xcrun stapler staple "$APP"` on the updater being requested, so a
-# dmg-only build ships an app that is notarized but carries no local ticket --
-# Gatekeeper then has to verify online on first launch after the app is dragged
-# out of the dmg. The updater tarball additionally carries a detached Ed25519
-# (minisign) signature, giving two independent trust layers.
+# gates `xcrun stapler staple "$APP"` on the updater being requested.
+#
+# SCOPE: this staples the app in the TARBALL only. The dmg is created before the
+# updater block runs, so the dmg still contains an unstapled app (measured on
+# v0.1.1: tarball copy validates, dmg copy reports "does not have a ticket
+# stapled to it", same CDHash). That is fine for dmg distribution -- the dmg
+# itself is stapled -- but it means requesting `updater` does not fix the
+# dragged-out-of-the-dmg case. The tarball additionally carries a detached
+# Ed25519 (minisign) signature, giving two independent trust layers.
 
 app_path     = dist/FoodTruck.app
 volname      = FoodTruck
