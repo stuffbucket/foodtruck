@@ -139,9 +139,33 @@ an arbitrary entitlements file.
 ## Verifying a build
 
 ```bash
-gh release download v0.1.0 --repo stuffbucket/foodtruck --pattern '*.dmg*'
-shasum -a 256 -c foodtruck-0.1.0-darwin-arm64.dmg.sha256
+gh release download vX.Y.Z --repo stuffbucket/foodtruck
+shasum -a 256 -c foodtruck-X.Y.Z-darwin-arm64.dmg.sha256
+xcrun stapler validate foodtruck-X.Y.Z-darwin-arm64.dmg
+spctl -a -t open --context context:primary-signature foodtruck-X.Y.Z-darwin-arm64.dmg
+hdiutil attach foodtruck-X.Y.Z-darwin-arm64.dmg
 codesign --verify --deep --strict --verbose=2 /Volumes/FoodTruck/FoodTruck.app
-spctl -a -t open --context context:primary-signature foodtruck-0.1.0-darwin-arm64.dmg
-xcrun stapler validate foodtruck-0.1.0-darwin-arm64.dmg
 ```
+
+## Why `updater` is requested
+
+`artifact = dmg,updater`. The tarball is not (yet) consumed by an auto-updater —
+it is requested because the updater path is the **only** one that staples the
+notarization ticket *into the `.app` bundle*. The builder gates
+`xcrun stapler staple "$APP"` on the updater being requested, so a dmg-only
+build ships an app that is notarized but carries no local ticket:
+
+```
+$ xcrun stapler validate FoodTruck.app     # dmg-only build
+FoodTruck.app does not have a ticket stapled to it.
+```
+
+That is harmless for dmg distribution — the dmg itself is stapled and Gatekeeper
+verifies online on first launch — but an app dragged out of the dmg then depends
+on reaching Apple, and an updater that swaps a bundle in place wants the ticket
+present locally. Requesting `updater` gets the app stapled at no extra
+notarization cost: `stapler` fetches the ticket by cdhash, which the dmg
+submission already registered.
+
+The tarball also carries a detached Ed25519 (minisign) `.sig`, so it has two
+independent trust layers: Apple notarization and the builder's own signing key.
