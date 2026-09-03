@@ -163,14 +163,52 @@ an arbitrary entitlements file.
 
 ## Verifying a build
 
+The moment you want to check a build is *before* you publish it — which is
+exactly when `gh release download` cannot help you. It resolves published
+releases only, and answers `release not found` for a draft. Pull draft assets
+through the asset API instead, **from inside a clone of this repo**:
+
 ```bash
-gh release download vX.Y.Z --repo stuffbucket/foodtruck
-shasum -a 256 -c foodtruck-X.Y.Z-darwin-arm64.dmg.sha256
-xcrun stapler validate foodtruck-X.Y.Z-darwin-arm64.dmg
-spctl -a -t open --context context:primary-signature foodtruck-X.Y.Z-darwin-arm64.dmg
-hdiutil attach foodtruck-X.Y.Z-darwin-arm64.dmg
-codesign --verify --deep --strict --verbose=2 /Volumes/FoodTruck/FoodTruck.app
+TAG=v0.1.2; VERSION="${TAG#v}"; OUT="$(mktemp -d)"
+
+gh release view "$TAG" --repo stuffbucket/foodtruck --json assets \
+  --jq '.assets[] | "\(.apiUrl)\t\(.name)"' \
+| while IFS="$(printf '\t')" read -r url name; do
+    gh api "$url" -H "Accept: application/octet-stream" > "$OUT/$name"
+  done
+
+cd "$OUT"
 ```
+
+The download runs in the clone and only then moves to a scratch directory,
+because a draft release is visible only to an account with push access — and
+when several accounts are signed into `gh`, it picks one based on the git remote
+of the current directory. Run the same command from `/tmp` with a personal
+account active and you get `release not found` again, for an entirely different
+reason. `--repo` does not save you: it selects the repo, not the account.
+
+Once the release is published the short form starts working, and is equivalent:
+
+```bash
+gh release download "$TAG" --repo stuffbucket/foodtruck
+```
+
+Either way the checks are the same:
+
+```bash
+shasum -a 256 -c "foodtruck-${VERSION}-darwin-arm64.dmg.sha256"
+xcrun stapler validate "foodtruck-${VERSION}-darwin-arm64.dmg"
+spctl -a -t open --context context:primary-signature -v "foodtruck-${VERSION}-darwin-arm64.dmg"
+
+hdiutil attach -nobrowse "foodtruck-${VERSION}-darwin-arm64.dmg"
+codesign --verify --deep --strict --verbose=2 /Volumes/FoodTruck/FoodTruck.app
+hdiutil detach /Volumes/FoodTruck
+```
+
+A good build answers `OK`, `The validate action worked!`, and — the one that
+proves the whole chain — `accepted` with `source=Notarized Developer ID`. The
+mounted app should report `valid on disk` and `satisfies its Designated
+Requirement` under `Developer ID Application: ... (N298D99R2X)`.
 
 ## Why `updater` is requested
 
