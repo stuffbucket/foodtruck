@@ -1,9 +1,16 @@
-# Manual dispatcher / recovery tool for the private macOS builder.
+# Rebuild the signed .dmg for a tag that already exists.
 #
-# Use this to (re)build the signed .dmg for a tag whose DRAFT release already
-# exists — e.g. the builder run failed, the notary service timed out, or the
-# cut workflow was interrupted. The normal path is release-cut.yml, which does
-# this automatically when you push a release/vX.Y.Z branch.
+#   gh workflow run macos-build.yml -f tag=v0.1.2
+#
+# Use this when the cut got as far as creating the tag but the artifact never
+# landed — the builder run failed, the notary service timed out, the cut was
+# interrupted, or the draft was deleted after the fact. The normal path is
+# release-cut.yml; this is the recovery path for everything downstream of the
+# tag, which is the one thing a re-cut cannot recreate.
+#
+# It creates the draft release if it is missing, so a tag whose draft was deleted
+# is still rebuildable. It will NOT create the tag: that is release-cut.yml's job,
+# and inventing a tag here would skip the "is this commit on main?" check.
 #
 # Like every workflow here this runs on ubuntu-latest and builds nothing itself.
 #
@@ -18,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)build, e.g. v0.1.0"
+        description: "Existing tag to (re)build, e.g. v0.1.2"
         required: true
         type: string
 
@@ -34,9 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      # Read-only: this job only reads the release to confirm the tag exists
-      # and to poll for the uploaded artifact.
-      contents: read
+      # Recreate the draft release when it is missing, and poll for the uploaded
+      # artifact. The tag is only ever read here, never written.
+      contents: write # recreate the draft release on an existing tag
     steps:
       - name: Dispatch stuffbucket/macos-builder
         env:
@@ -53,20 +60,57 @@ jobs:
             exit 1
           fi
 
+          # Same preflight as release-cut.yml: prove the credential is live with a
+          # read-only GET before doing anything else.
           if [ -z "${BUILDER_PAT:-}" ]; then
             echo "::error::MACOS_BUILDER_PAT is not set on this repo." >&2
-            echo "::error::Either add it, or dispatch by hand:" >&2
-            echo "::error::  gh workflow run build.yml --repo stuffbucket/macos-builder -f repo=${GITHUB_REPOSITORY} -f ref=${TAG}" >&2
+            exit 1
+          fi
+          if ! GH_TOKEN="$BUILDER_PAT" gh api \
+               repos/stuffbucket/macos-builder/actions/workflows/build.yml >/dev/null 2>&1; then
+            echo "::error::MACOS_BUILDER_PAT cannot reach build.yml on stuffbucket/macos-builder." >&2
+            echo "::error::It is expired, revoked, or no longer has Actions: read and write." >&2
+            echo "::error::Mint a new one at https://github.com/settings/personal-access-tokens/new" >&2
             exit 1
           fi
 
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::No release exists for ${TAG}. The builder uploads onto an existing draft." >&2
+          # The builder checks the client out at this tag, so it has to exist.
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::No tag ${TAG} in ${GITHUB_REPOSITORY}. Cut it first:" >&2
+            echo "::error::  gh workflow run release-cut.yml -f version=${TAG}" >&2
             exit 1
+          fi
+
+          # The builder uploads onto an existing release, and immutable releases
+          # reject assets after publish — so it must be a DRAFT before we dispatch.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "::error::Release ${TAG} is already published. GitHub rejects asset uploads onto a" >&2
+              echo "::error::published immutable release (HTTP 422), so the .dmg could never attach." >&2
+              exit 1
+            fi
+            echo "Draft ${TAG} exists — reusing it."
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$TAG" \
+              --generate-notes
+            echo "Recreated DRAFT release ${TAG}."
           fi
 
           VERSION="${TAG#v}"
           DMG="foodtruck-${VERSION}-darwin-arm64.dmg"
+
+          has_asset() {
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' 2>/dev/null | grep -Fxq "$1"
+          }
+
+          if has_asset "$DMG"; then
+            echo "${DMG} is already attached — nothing to do."
+            exit 0
+          fi
 
           echo "Dispatching stuffbucket/macos-builder for ${GITHUB_REPOSITORY} at ${TAG}…"
           GH_TOKEN="$BUILDER_PAT" gh workflow run build.yml \
@@ -75,12 +119,13 @@ jobs:
             -f "repo=${GITHUB_REPOSITORY}" \
             -f "ref=${TAG}"
 
-          echo "Waiting for ${DMG} on the ${TAG} release…"
+          echo "Waiting for ${DMG} on the ${TAG} draft…"
           for i in $(seq 1 40); do
             sleep 45
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
-                 --jq '.assets[].name' 2>/dev/null | grep -Fxq "$DMG"; then
+            if has_asset "$DMG"; then
               echo "${DMG} landed after ~$((i * 45))s."
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                --jq '.assets[] | "  \(.name)  \(.size) bytes"'
               exit 0
             fi
           done
