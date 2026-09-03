@@ -4,13 +4,36 @@ A hello-world macOS app that exists to prove one thing end to end: **a public
 GitHub repo can ship a signed, notarized `.dmg` without ever touching a macOS
 runner, a self-hosted runner, or an Apple credential.**
 
-Push a `release/vX.Y.Z` branch, and a signed `.dmg` appears on a draft release a
-few minutes later. That's the whole product.
+Run one command and a signed `.dmg` appears on a draft release a few minutes
+later. That's the whole product.
 
 ```
-git switch -c release/v0.1.0 main
-git push -u origin release/v0.1.0
+gh workflow run release-cut.yml -f version=v0.1.2
 ```
+
+## Cutting a release
+
+Two commands and a click, and only the first one is usually needed.
+
+```bash
+# 1. cut it (the version is the only thing you type)
+gh workflow run release-cut.yml -f version=v0.1.2
+
+# 2. only if the build half failed — the tag survives, so re-run just the build
+gh workflow run macos-build.yml -f tag=v0.1.2
+
+# 3. publish the draft when you are happy with it
+gh release edit v0.1.2 --draft=false
+```
+
+The cut refuses to create anything until it has checked the version shape, that
+the commit is on `main`, that the tag is free, and that the builder credential is
+live. So a failed cut leaves no wreckage: fix the cause and run the same command
+again.
+
+Once the tag exists it is the point of no return — a re-cut is blocked by design.
+That is what `macos-build.yml` is for: it rebuilds onto an existing tag and
+recreates the draft release if it went missing.
 
 ## Why it's built this way
 
@@ -28,20 +51,20 @@ runs on `ubuntu-latest` and builds nothing.
 ```
   foodtruck (PUBLIC)                      macos-builder (PRIVATE)
   ┌────────────────────────────┐          ┌──────────────────────────────────┐
-  │ push release/v0.1.0        │          │ self-hosted Mac + Apple keychain │
+  │ gh workflow run v0.1.2     │          │ self-hosted Mac + Apple keychain │
   │        │                   │          │                                  │
   │        ▼                   │          │                                  │
   │ release-cut.yml            │          │ build.yml                        │
   │  ubuntu-latest             │          │  ├─ sanitize repo/ref            │
   │  ├─ assert commit is on main          │  ├─ check allowlist + policy     │
-  │  ├─ create tag v0.1.0      │          │  ├─ mint app-repoman token       │
+  │  ├─ create tag v0.1.2      │          │  ├─ mint app-repoman token       │
   │  ├─ create DRAFT release   │          │  │    (1 hour, foodtruck only)   │
-  │  └─ dispatch ──────────────┼─────────►│  ├─ checkout foodtruck @ v0.1.0  │
+  │  └─ dispatch ──────────────┼─────────►│  ├─ checkout foodtruck @ v0.1.2  │
   │       MACOS_BUILDER_PAT    │          │  ├─ run .macos-builder/build.sh  │
   │                            │          │  ├─ sign → dmg → notarize →      │
   │                            │          │  │   staple → sha256            │
   │  draft release assets  ◄───┼──────────┼──┘ upload via app token          │
-  │   foodtruck-0.1.0-…dmg     │          │                                  │
+  │   foodtruck-0.1.2-…dmg     │          │                                  │
   └────────────────────────────┘          └──────────────────────────────────┘
 ```
 
@@ -76,8 +99,10 @@ signed in as `stuffbucket` → Resource owner `stuffbucket` → Only select
 repositories → `stuffbucket/macos-builder` → Repository permissions → **Actions:
 Read and write**. Nothing else.
 
-If the secret is absent or expired, `release-cut.yml` still creates the tag and
-draft release, then prints the manual dispatch command instead of failing.
+`release-cut.yml` proves the PAT is live with a read-only `GET` on the builder's
+`build.yml` **before** it creates the tag — one call that catches a missing,
+expired, revoked or under-scoped token alike. It fails there, having created
+nothing, and tells you how to mint a replacement. Nothing to clean up.
 
 ## Why a fork can't steal the token
 
@@ -101,8 +126,8 @@ the build if either ever appears in `.github/workflows/`. Same for a `macos` or
 | `src/Info.plist` | Bundle metadata. `CFBundleIdentifier` must equal the builder-side policy. |
 | `.macos-builder/config` | Declarative build config the builder reads. |
 | `.macos-builder/build.sh` | The **producer**: builds `dist/FoodTruck.app` and stops. |
-| `.github/workflows/release-cut.yml` | Push `release/v*` → tag, draft release, signed dmg. |
-| `.github/workflows/macos-build.yml` | Manual rebuild of an existing tag. |
+| `.github/workflows/release-cut.yml` | `-f version=vX.Y.Z` → tag, draft release, signed dmg. |
+| `.github/workflows/macos-build.yml` | `-f tag=vX.Y.Z` → rebuild onto an existing tag. |
 | `.github/workflows/ci.yml` | The guardrails above, plus shellcheck/zizmor/config validation. |
 
 ## The producer contract

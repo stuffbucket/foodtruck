@@ -1,38 +1,53 @@
-# Cut a release: push a release/vX.Y.Z branch, get a signed .dmg on a DRAFT release.
+# Cut a release: one command, and a signed .dmg lands on a DRAFT release.
 #
-#   git switch -c release/v0.1.0 main
-#   git push -u origin release/v0.1.0
+#   gh workflow run release-cut.yml -f version=v0.1.2
 #
 # This workflow builds NOTHING itself and runs only on ubuntu-latest. The macOS
 # app is built, signed, notarized and stapled by the PRIVATE stuffbucket/macos-builder
 # repo, which owns the only self-hosted macOS runner and all Apple secrets. This
 # repo is public and must never reference a self-hosted or macOS runner.
 #
+# WHY A DISPATCH AND NOT A release/vX.Y.Z BRANCH
+#   The release commit must already be on main, so a release branch could never
+#   carry a commit of its own — it was a button wearing a branch's clothes. Worse,
+#   `on: push` only fires when a ref MOVES, so retrying a failed cut meant deleting
+#   the remote branch and pushing it again. A dispatch is an event: retry is the
+#   same command a second time, and nothing is left behind to clean up.
+#
 # WHY THE RELEASE STAYS A DRAFT
 #   GitHub immutable releases reject attaching assets AFTER publish (HTTP 422).
 #   The builder uploads onto the still-mutable draft. Publishing is a deliberate
 #   human step afterwards.
 #
-# WHY A TAG AND NOT JUST THE BRANCH
+# WHY A TAG AND NOT JUST THE SHA
 #   The builder checks the client out at a TAG (its `ref` input is tag-shaped),
 #   and a GitHub draft release does not create its tag until published — so the
 #   tag must exist first, pointing at the commit being released.
+#
+# STEP ORDER IS LOAD-BEARING
+#   Every step above "Create the tag" is free to fail: it creates nothing, so you
+#   fix the problem and dispatch again. The tag is the point of no return — it is
+#   durable, and "Refuse if the tag already exists" will block a re-cut. So all
+#   validation, including reaching the builder, happens in front of it.
 
 name: Cut release
 
 on:
-  push:
-    branches:
-      - 'release/v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to cut, e.g. v0.1.2"
+        required: true
+        type: string
 
 # Deny by default at the workflow level; the one job that needs a write scope
 # grants it to itself. Keeps the blast radius of any future job at zero.
 permissions: {}
 
-# Never run two cuts for the same branch at once, and never cancel one in
+# Never run two cuts for the same version at once, and never cancel one in
 # flight — a cut interrupted mid-notarization leaves a half-built draft.
 concurrency:
-  group: release-cut-${{ github.ref_name }}
+  group: release-cut-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -55,18 +70,18 @@ jobs:
           # so no git credential ever needs to be written to .git/config.
           persist-credentials: false
 
-      # github.ref_name is attacker-influenced in principle (it is a branch name),
-      # so it is passed via env and never interpolated into a run: body.
+      # workflow_dispatch input is untrusted: validate before use, and never
+      # interpolate it into a run: body (it arrives via env).
       - name: Resolve and validate the version
         id: v
         env:
-          BRANCH: ${{ github.ref_name }}
+          VERSION_IN: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          TAG="${BRANCH#release/}"
+          TAG="$VERSION_IN"
           if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
-            echo "::error::Branch '${BRANCH}' does not name a semver release." >&2
-            echo "::error::Expected release/vX.Y.Z or release/vX.Y.Z-prerelease." >&2
+            echo "::error::'${TAG}' does not name a semver release." >&2
+            echo "::error::Expected vX.Y.Z or vX.Y.Z-prerelease." >&2
             exit 1
           fi
           {
@@ -75,10 +90,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Cutting ${TAG}"
 
-      # The definition of done is "builds from main". Requiring the release
-      # commit to be contained in origin/main means released code went through
-      # the require-PR ruleset on main; it cannot be smuggled in on a side branch.
-      # Ancestry (not equality) so main may move on after the cut.
+      # The definition of done is "builds from main". A dispatch defaults to main,
+      # but --ref can aim it at any branch, so this still has work to do: it means
+      # released code went through the require-PR ruleset on main and cannot be
+      # smuggled in on a side branch. Ancestry (not equality) so main may move on
+      # after the cut.
       - name: Assert the release commit is on main
         run: |
           set -euo pipefail
@@ -91,7 +107,7 @@ jobs:
           fi
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::HEAD ($(git rev-parse --short HEAD)) is not contained in origin/main." >&2
-            echo "::error::Cut release branches from main: git switch -c ${GITHUB_REF_NAME} main" >&2
+            echo "::error::Dispatch from main: gh workflow run release-cut.yml -f version=${GITHUB_REF_NAME}" >&2
             exit 1
           fi
           echo "HEAD $(git rev-parse --short HEAD) is on main."
@@ -103,9 +119,36 @@ jobs:
         run: |
           set -euo pipefail
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::error::Tag ${TAG} already exists. Bump the version or delete the tag." >&2
+            echo "::error::Tag ${TAG} already exists. Bump the version, or rebuild it with:" >&2
+            echo "::error::  gh workflow run macos-build.yml -f tag=${TAG}" >&2
             exit 1
           fi
+
+      # The LAST thing that can fail for a reason outside this repo, so it runs
+      # before anything durable is created. A read-only GET proves three things at
+      # once: the secret exists, the token is still valid, and it can actually see
+      # build.yml on the private builder.
+      - name: Preflight the builder credential
+        env:
+          BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUILDER_PAT:-}" ]; then
+            echo "::error::MACOS_BUILDER_PAT is not set on this repo." >&2
+            exit 1
+          fi
+          if ! GH_TOKEN="$BUILDER_PAT" gh api \
+               repos/stuffbucket/macos-builder/actions/workflows/build.yml >/dev/null 2>&1; then
+            echo "::error::MACOS_BUILDER_PAT cannot reach build.yml on stuffbucket/macos-builder." >&2
+            echo "::error::It is expired, revoked, or no longer has Actions: read and write." >&2
+            echo "::error::Mint a new one at https://github.com/settings/personal-access-tokens/new" >&2
+            echo "::error::  Resource owner: stuffbucket -> Only select repositories:" >&2
+            echo "::error::  stuffbucket/macos-builder -> Repository permissions -> Actions: Read and write." >&2
+            exit 1
+          fi
+          echo "OK — the builder credential is live."
+
+      # ----- point of no return: everything below creates durable state -----
 
       # Created via the REST API, not `git push`, so this job never needs a
       # persisted git credential. Two calls make it a real ANNOTATED tag (an
@@ -151,8 +194,8 @@ jobs:
       # secrets or reach any other repo. GitHub never exposes it to fork PRs, and
       # this workflow has no pull_request trigger at all.
       #
-      # The step is guarded on the secret being present so an expired or rotated
-      # PAT degrades to an actionable notice instead of failing the whole cut.
+      # If this step fails, the tag and draft survive; recover with
+      #   gh workflow run macos-build.yml -f tag=vX.Y.Z
       - name: Build the signed .dmg on stuffbucket/macos-builder
         env:
           BUILDER_PAT: ${{ secrets.MACOS_BUILDER_PAT }}
@@ -162,14 +205,6 @@ jobs:
         run: |
           set -euo pipefail
           DMG="foodtruck-${VERSION}-darwin-arm64.dmg"
-
-          if [ -z "${BUILDER_PAT:-}" ]; then
-            echo "::notice::Draft ${TAG} created, but MACOS_BUILDER_PAT is not set, so the signed build was not started."
-            echo "Start it manually with:"
-            echo "  gh workflow run build.yml --repo stuffbucket/macos-builder \\"
-            echo "     -f repo=${GITHUB_REPOSITORY} -f ref=${TAG}"
-            exit 0
-          fi
 
           has_asset() {
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
@@ -204,6 +239,7 @@ jobs:
           echo "::error::Timed out waiting for ${DMG} on the ${TAG} draft." >&2
           echo "::error::Check the run at https://github.com/stuffbucket/macos-builder/actions" >&2
           echo "::error::The release stays a DRAFT — it is never published without the signed build." >&2
+          echo "::error::Retry with: gh workflow run macos-build.yml -f tag=${TAG}" >&2
           exit 1
 
       - name: Summary
@@ -214,7 +250,7 @@ jobs:
           {
             echo "### Cut ${TAG}"
             echo ""
-            echo "- Tag \`${TAG}\` pushed at \`${GITHUB_SHA}\`"
+            echo "- Tag \`${TAG}\` created at \`${GITHUB_SHA}\`"
             echo "- Release created as a **draft** (never auto-published)"
             echo "- Review it, then publish manually when you are happy"
           } >> "$GITHUB_STEP_SUMMARY"
