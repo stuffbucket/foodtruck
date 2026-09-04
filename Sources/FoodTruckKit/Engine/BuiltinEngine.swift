@@ -107,19 +107,25 @@ struct WorkspaceRecipe: BuiltinRecipe {
         let fm = FileManager.default
         for url in context.locations.all + [context.locations.toolbox] {
             var isDir: ObjCBool = false
+            let name = url.lastPathComponent
+            report.facts[name] = url.path
+
             if !fm.fileExists(atPath: url.path, isDirectory: &isDir) {
                 report.findings.append(Finding(
-                    id: "dir.missing:\(url.lastPathComponent)", severity: .drift,
+                    id: "dir.missing:\(name)", severity: .drift,
                     title: "finding.dir.missing", args: ["path": url.path],
                     observed: "absent", desired: "present"))
+                report.checks.append(Check(id: "dir:\(name)", label: url.path, passed: false))
             } else if !fm.isWritableFile(atPath: url.path) || !isDir.boolValue {
                 report.findings.append(Finding(
-                    id: "dir.unwritable:\(url.lastPathComponent)", severity: .risk,
+                    id: "dir.unwritable:\(name)", severity: .risk,
                     title: "finding.dir.unwritable", args: ["path": url.path],
                     observed: "unwritable", desired: "writable",
                     fixable: false, remedy: "fault.readOnlyViolation.remedy"))
+                report.checks.append(Check(id: "dir:\(name)", label: url.path, passed: false))
+            } else {
+                report.checks.append(Check(id: "dir:\(name)", label: url.path, passed: true))
             }
-            report.facts[url.lastPathComponent] = url.path
         }
         return report
     }

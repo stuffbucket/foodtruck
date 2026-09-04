@@ -62,6 +62,37 @@ public struct Finding: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
+/// One predicate that was actually evaluated, and how it came out.
+///
+/// This type exists because "Everything is where it should be" was not a claim
+/// FoodTruck had earned. It rested on two predicates, one of which passed
+/// vacuously, on a machine with seven other toolchains installed that it had
+/// never looked at. The word "everything" was doing work the evidence could not
+/// support.
+///
+/// So checks are now reported whether they pass or fail. A green result that
+/// cannot show its working is indistinguishable from one that did nothing, and
+/// the person reading it has no way to tell which they have.
+public struct Check: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    /// What this predicate guarantees, in the recipe author's words.
+    public var label: String
+    public var passed: Bool
+    /// True when the predicate passed because nothing was asked of it, rather
+    /// than because something was verified. An empty Brewfile satisfies "every
+    /// formula in your Brewfile is installed" without proving anything, and
+    /// counting that as evidence is how a tool talks itself into confidence.
+    public var vacuous: Bool
+    /// False for steps only a person may perform.
+    public var automatable: Bool
+
+    public init(id: String, label: String, passed: Bool,
+                vacuous: Bool = false, automatable: Bool = true) {
+        self.id = id; self.label = label; self.passed = passed
+        self.vacuous = vacuous; self.automatable = automatable
+    }
+}
+
 /// What a recipe printed on stdout for `audit`, `verify` or `detect`.
 ///
 /// Every field is optional except the schema, so a recipe that prints nothing
@@ -69,17 +100,28 @@ public struct Finding: Codable, Sendable, Identifiable, Equatable {
 /// "converged, no detail" than fail a run because a shell script forgot a
 /// closing brace.
 public struct RecipeReport: Codable, Sendable, Equatable {
+    private enum CodingKeys: String, CodingKey { case schema, findings, facts, checks }
+
     public var schema: String
     public var findings: [Finding]
     public var facts: [String: String]
+    /// Every predicate evaluated, passing ones included.
+    public var checks: [Check]
 
     public static let currentSchema = "foodtruck.report/1"
 
-    public init(findings: [Finding] = [], facts: [String: String] = [:]) {
+    public init(findings: [Finding] = [], facts: [String: String] = [:],
+                checks: [Check] = []) {
         self.schema = Self.currentSchema
         self.findings = findings
         self.facts = facts
+        self.checks = checks
     }
+
+    /// How much this report is actually worth. A recipe that verified nothing
+    /// is not the same as a recipe that verified everything, and the UI must be
+    /// able to tell them apart.
+    public var provenCount: Int { checks.filter { $0.passed && !$0.vacuous }.count }
 
     public var worstSeverity: Severity { findings.map(\.severity).max() ?? .ok }
 
@@ -89,4 +131,12 @@ public struct RecipeReport: Codable, Sendable, Equatable {
     /// tool is unpinned -- is worth showing and not worth interrupting anyone
     /// over. Conflating the two is how a status tool trains people to ignore it.
     public var requiresAction: Bool { findings.contains { $0.severity >= .drift } }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decodeIfPresent(String.self, forKey: .schema) ?? Self.currentSchema
+        findings = try c.decodeIfPresent([Finding].self, forKey: .findings) ?? []
+        facts = try c.decodeIfPresent([String: String].self, forKey: .facts) ?? [:]
+        checks = try c.decodeIfPresent([Check].self, forKey: .checks) ?? []
+    }
 }

@@ -150,6 +150,18 @@ final class AppModel {
     }
     var hasAnyResult: Bool { !results.isEmpty }
 
+    /// Predicates that passed because something was verified. Deliberately not
+    /// "checks that passed" -- a check that passed because nothing was asked of
+    /// it is not evidence, and the summary must not spend it as though it were.
+    var provenCount: Int {
+        visibleRecipes.reduce(0) { $0 + (results[$1.id]?.report.provenCount ?? 0) }
+    }
+    var vacuousCount: Int {
+        visibleRecipes.reduce(0) {
+            $0 + (results[$1.id]?.report.checks.filter(\.vacuous).count ?? 0)
+        }
+    }
+
     /// Whether converging everything would actually do anything, so the primary
     /// button can be disabled rather than doing nothing and looking broken.
     var hasFixableWork: Bool {

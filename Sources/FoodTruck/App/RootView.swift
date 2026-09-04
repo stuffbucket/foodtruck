@@ -50,6 +50,15 @@ struct RootView: View {
         }
     }
 
+    /// e.g. "Nothing to fix · 3 checks passed"
+    private var summaryWhenClean: String {
+        var parts = [t("summary.nothingToFix"), tn("summary.proven", model.provenCount)]
+        if model.vacuousCount > 0 {
+            parts.append(tn("summary.vacuous", model.vacuousCount))
+        }
+        return parts.joined(separator: t("list.separator"))
+    }
+
     private var sidebar: some View {
         List(selection: $model.selection) {
             ForEach(model.visibleRecipes) { recipe in
@@ -71,12 +80,17 @@ struct RootView: View {
                     .foregroundStyle(model.needingAttention == 0 ? .green : .orange)
                     .imageScale(.small)
                     .accessibilityHidden(true)
+                // States its own scope rather than asserting "everything".
+                // FoodTruck can only speak for the recipes it has, and saying
+                // how many predicates actually proved something is the
+                // difference between a status and a claim.
                 Text(model.needingAttention == 0
-                     ? t("summary.clean")
+                     ? summaryWhenClean
                      : tn("summary.attention", model.needingAttention))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .help(model.needingAttention == 0 ? t("summary.clean.help") : "")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)

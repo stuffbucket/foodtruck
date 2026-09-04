@@ -100,3 +100,14 @@
 "recipe.customised.help" = "Has editado esta receta. FoodTruck dejará tu versión intacta.";
 "setup.needed" = "FoodTruck aún no ha terminado de instalarse en este Mac.";
 "setup.needed.remedy" = "Ejecuta «foodtruck converge» una vez. Solo escribe dentro de la carpeta de FoodTruck.";
+"summary.nothingToFix" = "Nada requiere tu atención";
+"summary.proven.one" = "1 comprobación superada";
+"summary.proven.other" = "%{count} comprobaciones superadas";
+"summary.vacuous.one" = "1 no demostró nada";
+"summary.vacuous.other" = "%{count} no demostraron nada";
+"check.vacuous" = "No se declaró nada, así que esto no demostró nada.";
+"check.passed" = "Superada";
+"check.failed" = "Todavía no";
+"detail.checked" = "Qué comprobó FoodTruck";
+"detail.nothingToCheck" = "Esta receta no declara nada que FoodTruck pueda verificar.";
+"summary.clean.help" = "FoodTruck solo puede responder por las recetas que tiene. Lo que no tiene receta no se comprobó.";

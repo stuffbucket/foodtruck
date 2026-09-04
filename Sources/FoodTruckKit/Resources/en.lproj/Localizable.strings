@@ -110,3 +110,14 @@
 "recipe.customised.help" = "You have edited this recipe. FoodTruck will leave your version alone.";
 "setup.needed" = "FoodTruck has not finished setting itself up on this Mac.";
 "setup.needed.remedy" = "Run `foodtruck converge` once. It only writes inside FoodTruck's own folder.";
+"summary.nothingToFix" = "Nothing needs your attention";
+"summary.proven.one" = "1 check passed";
+"summary.proven.other" = "%{count} checks passed";
+"summary.vacuous.one" = "1 proved nothing";
+"summary.vacuous.other" = "%{count} proved nothing";
+"check.vacuous" = "Nothing was declared, so this proved nothing.";
+"check.passed" = "Passed";
+"check.failed" = "Not yet";
+"detail.checked" = "What FoodTruck checked";
+"detail.nothingToCheck" = "This recipe declares nothing FoodTruck can verify.";
+"summary.clean.help" = "FoodTruck can only speak for the recipes it has. Anything without a recipe was not checked.";

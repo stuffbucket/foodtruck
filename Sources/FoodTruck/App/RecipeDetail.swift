@@ -34,9 +34,20 @@ struct RecipeDetail: View {
                 } header: {
                     Text(t("detail.findings"))
                 }
+            }
+
+            if let checks = result?.report.checks, !checks.isEmpty {
+                Section(t("detail.checked")) {
+                    ForEach(checks) { check in
+                        CheckRow(check: check)
+                    }
+                }
             } else if result != nil {
                 Section {
-                    Label(t("detail.clean"), systemImage: "checkmark.circle")
+                    // No checks and no findings means the recipe declares
+                    // nothing we can verify -- say that, rather than implying
+                    // we looked and were satisfied.
+                    Label(t("detail.nothingToCheck"), systemImage: "questionmark.circle")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -153,5 +164,38 @@ struct FindingRow: View {
         .accessibilityLabel(
             "\(t("severity.\(finding.severity.rawValue)")). \(t(finding.title, finding.args))")
         .accessibilityHint(finding.remedy.map { t($0, finding.args) } ?? "")
+    }
+}
+
+
+struct CheckRow: View {
+    let check: Check
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: check.vacuous ? "minus.circle"
+                  : check.passed ? "checkmark.circle.fill" : "square")
+                .foregroundStyle(check.vacuous ? AnyShapeStyle(.secondary)
+                                 : check.passed ? AnyShapeStyle(Color.green)
+                                 : AnyShapeStyle(Color.orange))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(check.label)
+                    .foregroundStyle(check.vacuous ? .secondary : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if check.vacuous {
+                    // The distinction that matters: this passed because nothing
+                    // was asked of it, not because anything was verified.
+                    Text(t("check.vacuous"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(check.label). \(t(check.vacuous ? "check.vacuous" : check.passed ? "check.passed" : "check.failed"))")
     }
 }

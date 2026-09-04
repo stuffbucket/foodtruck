@@ -77,6 +77,8 @@ struct ToolboxRecipe: BuiltinRecipe {
                     id: "toolbox.absent:\(pin.id)", severity: .drift,
                     title: "finding.tool.absent", args: ["tool": pin.id],
                     observed: "absent", desired: pin.version))
+                report.checks.append(Check(
+                    id: "pin:\(pin.id)", label: "\(pin.id) \(pin.version)", passed: false))
                 continue
             }
             let version = await Exec.run(installed, ["--version"],
@@ -91,6 +93,9 @@ struct ToolboxRecipe: BuiltinRecipe {
                            "desired": pin.version],
                     observed: observed, desired: pin.version))
             }
+            report.checks.append(Check(
+                id: "pin:\(pin.id)", label: "\(pin.id) \(pin.version)",
+                passed: observed.contains(pin.version)))
         }
         return report
     }

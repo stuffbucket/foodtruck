@@ -70,7 +70,7 @@ public struct SelfTestReport: Sendable {
 
 public enum SelfTest {
     public static var suites: [Suite] {
-        [LocationSuite.suite, GraphSuite.suite, ReportSuite.suite,
+        [LocationSuite.suite, GraphSuite.suite, ReportSuite.suite, EvidenceSuite.suite,
          ReadOnlySuite.suite, ConvergeSuite.suite, IntlSuite.suite]
     }
 

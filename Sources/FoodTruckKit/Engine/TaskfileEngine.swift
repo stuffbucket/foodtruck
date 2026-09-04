@@ -98,20 +98,25 @@ public struct TaskfileEngine: RecipeEngine {
         case .detect, .audit, .verify:
             return await inspect(recipe, context, verb: verb, started: started)
         case .plan:
-            let drifted = await driftedTasks(recipe, context)
-            guard let (bin, args, env, dir) =
-                invocation(recipe, context, ["-n"] + drifted.filter(\.automatable).map(\.name))
+            let probes = await probeAll(recipe, context)
+            let bad = drifted(probes)
+            guard let (bin, args, env, dir) = invocation(
+                recipe, context,
+                ["-n"] + bad.filter { $0.check.automatable }.map(\.name))
             else { return fault(.engineUnavailable) }
             let r = await Exec.run(bin, args, environment: env,
                                    workingDirectory: dir, timeout: recipe.timeout)
-            return VerbResult(recipe: recipe.id, verb: verb,
-                              outcome: drifted.isEmpty ? .converged : .drift,
-                              report: RecipeReport(findings: drifted.map(\.finding)),
-                              duration: Date().timeIntervalSince(started), log: r.stdout)
+            return VerbResult(
+                recipe: recipe.id, verb: verb,
+                outcome: bad.isEmpty ? .converged : .drift,
+                report: RecipeReport(findings: bad.compactMap(\.finding),
+                                     checks: probes.map(\.check)),
+                duration: Date().timeIntervalSince(started), log: r.stdout)
         case .converge:
-            let drifted = await driftedTasks(recipe, context)
-            let automatable = drifted.filter(\.automatable)
-            if drifted.isEmpty {
+            let probes = await probeAll(recipe, context)
+            let bad = drifted(probes)
+            let automatable = bad.filter { $0.check.automatable }
+            if bad.isEmpty {
                 return VerbResult(recipe: recipe.id, verb: verb, outcome: .converged,
                                   duration: Date().timeIntervalSince(started))
             }
@@ -120,7 +125,8 @@ public struct TaskfileEngine: RecipeEngine {
                 // never be reported as one -- it is a clear instruction.
                 return VerbResult(
                     recipe: recipe.id, verb: verb, outcome: .blocked,
-                    report: RecipeReport(findings: drifted.map(\.finding)),
+                    report: RecipeReport(findings: bad.compactMap(\.finding),
+                                         checks: probes.map(\.check)),
                     duration: Date().timeIntervalSince(started))
             }
             let flags = context.dryRun ? ["-n"] : ["-C", "4", "-o", "group"]
@@ -160,17 +166,9 @@ public struct TaskfileEngine: RecipeEngine {
         var tasks: [Entry]
     }
 
-    struct Drifted {
-        var name: String
-        /// False for `manual:*`. Converge filters on this, so a task a person
-        /// must run cannot be invoked by accident from anywhere in the code.
-        var automatable: Bool
-        var finding: Finding
-    }
-
     /// The managed surface of a recipe: every task named `ensure:*` or
-    /// `manual:*`. `--no-status` because we do not trust that field and do not
-    /// want to pay for it either.
+    /// `manual:*`. `--no-status` because that field is unreliable (it is false
+    /// even for `status: [true]`) and we do not want to pay for it either.
     private func managedTasks(_ recipe: Recipe, _ context: RunContext) async -> [Listing.Entry] {
         guard let (bin, args, env, dir) =
             invocation(recipe, context, ["--list-all", "--json", "--no-status"])
@@ -185,55 +183,63 @@ public struct TaskfileEngine: RecipeEngine {
         }
     }
 
-    /// Which `ensure:*` tasks are out of date.
+    struct Probed {
+        var name: String
+        var check: Check
+        var finding: Finding?
+    }
+
+    /// Evaluate every managed predicate and report all of them.
     ///
-    /// Two phases, because the common case deserves to be fast. `--status` over
-    /// the whole set is one process and answers "is anything wrong at all"; on a
-    /// converged machine -- which is most machines, most of the time -- that is
-    /// the entire audit. Only when it says something is wrong do we pay for
-    /// per-task resolution, and those probes are independent, so they run at
-    /// once rather than in a queue.
-    private func driftedTasks(_ recipe: Recipe, _ context: RunContext) async -> [Drifted] {
+    /// The batch `--status` shortcut is gone on purpose. It could answer "is
+    /// anything wrong" in one process, which was fast, but it could not say
+    /// what it had checked -- and a green answer that cannot show its working
+    /// is indistinguishable from one that checked nothing. The probes are
+    /// independent, so they run at once; the cost is a handful of short-lived
+    /// processes and the gain is an auditable answer.
+    private func probeAll(_ recipe: Recipe, _ context: RunContext) async -> [Probed] {
         let tasks = await managedTasks(recipe, context)
         guard !tasks.isEmpty else { return [] }
 
-        func probe(_ names: [String]) async -> Int32 {
-            guard let (bin, args, env, dir) =
-                invocation(recipe, context, ["--status"] + names) else { return -1 }
-            return await Exec.run(bin, args, environment: env,
-                                  workingDirectory: dir, timeout: recipe.timeout).status
-        }
-
-        if await probe(tasks.map(\.name)) == 0 { return [] }
-
-        return await withTaskGroup(of: Drifted?.self) { group in
+        return await withTaskGroup(of: Probed?.self) { group in
             for entry in tasks {
                 group.addTask {
-                    guard await probe([entry.name]) != 0 else { return nil }
+                    guard let (bin, args, env, dir) =
+                        invocation(recipe, context, ["--status", entry.name]) else { return nil }
+                    let status = await Exec.run(bin, args, environment: env,
+                                                workingDirectory: dir,
+                                                timeout: recipe.timeout).status
                     let manual = entry.name.hasPrefix("manual:")
+                    let label = entry.desc.flatMap { $0.isEmpty ? nil : $0 } ?? entry.name
+                    let passed = status == 0
+                    let check = Check(id: entry.name, label: label, passed: passed,
+                                      automatable: !manual)
+                    guard !passed else { return Probed(name: entry.name, check: check) }
                     let remedy = entry.summary.flatMap { $0.isEmpty ? nil : $0 }
-                    return Drifted(name: entry.name, automatable: !manual, finding: Finding(
+                    return Probed(name: entry.name, check: check, finding: Finding(
                         id: "\(recipe.id):\(entry.name)",
                         severity: .drift,
                         title: "finding.task.drift",
-                        args: ["task": entry.desc.flatMap { $0.isEmpty ? nil : $0 } ?? entry.name],
+                        args: ["task": label],
                         observed: "drift", desired: "converged",
                         fixable: !manual,
-                        // A manual step without a summary would be a dead end,
-                        // so there is always a fallback sentence.
                         remedy: manual ? (remedy ?? "finding.task.manual.remedy") : nil))
                 }
             }
-            var acc: [Drifted] = []
-            for await d in group { if let d { acc.append(d) } }
+            var acc: [Probed] = []
+            for await p in group { if let p { acc.append(p) } }
             return acc.sorted { $0.name < $1.name }
         }
     }
 
+    private func drifted(_ probes: [Probed]) -> [Probed] { probes.filter { $0.finding != nil } }
+
     private func inspect(
         _ recipe: Recipe, _ context: RunContext, verb: Verb, started: Date
     ) async -> VerbResult {
-        var report = RecipeReport(findings: await driftedTasks(recipe, context).map(\.finding))
+        let probes = await probeAll(recipe, context)
+        var report = RecipeReport(findings: probes.compactMap(\.finding),
+                                  checks: probes.map(\.check))
 
         // Optional richer audit, merged over the structural findings. A recipe
         // that does not define `audit` simply contributes nothing here.
@@ -247,6 +253,16 @@ public struct TaskfileEngine: RecipeEngine {
                 report.facts.merge(extra.facts) { _, new in new }
                 let known = Set(report.findings.map(\.id))
                 report.findings += extra.findings.filter { !known.contains($0.id) }
+                // A recipe may annotate a check it knows passed vacuously --
+                // "your Brewfile is satisfied" proves nothing when there is no
+                // Brewfile. Only the recipe can know that, so only the recipe
+                // can say it.
+                for annotation in extra.checks {
+                    if let i = report.checks.firstIndex(where: { $0.id == annotation.id }) {
+                        report.checks[i].vacuous = annotation.vacuous
+                        if !annotation.label.isEmpty { report.checks[i].label = annotation.label }
+                    }
+                }
             }
         }
         report.findings.sort { $0.severity > $1.severity }

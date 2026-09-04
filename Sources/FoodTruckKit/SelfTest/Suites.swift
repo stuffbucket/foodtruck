@@ -184,6 +184,39 @@ enum ReportSuite {
     ])
 }
 
+enum EvidenceSuite {
+    static let suite = Suite("evidence", [
+        Case("A vacuous check is never counted as proof") { s in
+            // The distinction the whole type exists for: passing because
+            // nothing was asked is not the same as passing because something
+            // was verified.
+            let report = RecipeReport(checks: [
+                Check(id: "a", label: "real", passed: true),
+                Check(id: "b", label: "empty", passed: true, vacuous: true),
+                Check(id: "c", label: "failed", passed: false),
+            ])
+            s.equal(report.provenCount, 1, "only the real pass counts as proof")
+        },
+        Case("A converged recipe can show what it actually evaluated") { s in
+            // A green result that cannot show its working is indistinguishable
+            // from one that checked nothing, so converging must leave evidence.
+            let box = Sandbox(); defer { box.destroy() }
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]))
+            _ = try await kitchen.converge(only: ["core.locations"])
+            let service = await kitchen.inspect(.audit)
+            let checks = service.results.flatMap(\.report.checks)
+            s.require(!checks.isEmpty, "converged with no evidence of what was checked")
+            s.require(checks.allSatisfy(\.passed), "every check should pass after converge")
+        },
+        Case("An older report with no checks still decodes") { s in
+            let json = #"{"schema":"foodtruck.report/1","findings":[],"facts":{}}"#
+            let report = try JSONDecoder().decode(RecipeReport.self, from: Data(json.utf8))
+            s.require(report.checks.isEmpty, "absent checks decode as empty, not a failure")
+            s.equal(report.provenCount, 0, "and prove nothing")
+        },
+    ])
+}
+
 enum ReadOnlySuite {
     static let suite = Suite("read-only", [
         Case("audit changes nothing, on a machine where everything is missing") { s in

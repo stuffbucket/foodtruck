@@ -40,13 +40,15 @@ struct CookbookRecipe: BuiltinRecipe {
             guard FileManager.default.fileExists(
                 atPath: src.appending(path: "recipe.json").path) else { continue }
             let id = src.lastPathComponent
-            if !FileManager.default.fileExists(
-                atPath: context.locations.recipes.appending(path: id).path) {
+            let installed = FileManager.default.fileExists(
+                atPath: context.locations.recipes.appending(path: id).path)
+            if !installed {
                 report.findings.append(Finding(
                     id: "cookbook.absent:\(id)", severity: .drift,
                     title: "finding.recipe.notInstalled", args: ["recipe": id],
                     observed: "absent", desired: "installed"))
             }
+            report.checks.append(Check(id: "recipe:\(id)", label: id, passed: installed))
         }
         return report
     }

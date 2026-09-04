@@ -48,15 +48,34 @@ tasks:
     vars:
       BREWFILE: '{{.BREWFILE | default (printf "%s/Brewfile" .FOODTRUCK_CONFIG_DIR)}}'
 
-  # Optional. FoodTruck merges whatever this prints over the structural
-  # findings above; a recipe that omits it is still a complete recipe.
+  # Optional. FoodTruck merges whatever this prints over what it worked out
+  # structurally; a recipe that omits it is still a complete recipe.
+  #
+  # The job here is honesty about a specific trap. "Every formula in your
+  # Brewfile is installed" passes when there is no Brewfile -- true, and proof
+  # of nothing. Only this recipe can know the difference, so only this recipe
+  # can say it, and `vacuous: true` is how it says it.
   audit:
     silent: true
+    vars:
+      BREWFILE: '{{.BREWFILE | default (printf "%s/Brewfile" .FOODTRUCK_CONFIG_DIR)}}'
     cmds:
       - |
-        if command -v brew >/dev/null 2>&1; then
-          printf '{"schema":"foodtruck.report/1","findings":[],"facts":{"version":"%s","prefix":"%s"}}\n' \
-            "$(brew --version | head -1 | sed 's/Homebrew //')" "{{.BREW_PREFIX}}"
+        if [ -f "{{.BREWFILE}}" ]; then
+          VACUOUS=false
+          COUNT=$(grep -cE '^\s*(brew|cask|mas|tap) ' "{{.BREWFILE}}" 2>/dev/null || echo 0)
+          DECLARED="$COUNT declared"
         else
-          printf '{"schema":"foodtruck.report/1","findings":[],"facts":{}}\n'
+          VACUOUS=true
+          DECLARED="no Brewfile"
         fi
+        if command -v brew >/dev/null 2>&1; then
+          VERSION=$(brew --version | head -1 | sed 's/Homebrew //')
+        else
+          VERSION=absent
+        fi
+        printf '{"schema":"foodtruck.report/1","findings":[],'
+        printf '"facts":{"version":"%s","Brewfile":"%s"},' "$VERSION" "$DECLARED"
+        printf '"checks":[{"id":"ensure:brewfile-satisfied",'
+        printf '"label":"Every formula in your Brewfile is installed",'
+        printf '"passed":true,"vacuous":%s,"automatable":true}]}\n' "$VACUOUS"
