@@ -1,0 +1,110 @@
+/* FoodTruck — English (source of truth).
+   Keys are hierarchical: <domain>.<subject>.<aspect>.
+   Placeholders are named: %{name}. Translators may reorder them freely. */
+
+"app.name" = "FoodTruck";
+"app.tagline" = "Keeps your Mac's development environment honest.";
+
+/* Verdicts */
+"state.converged" = "Ready";
+"state.drift" = "Needs attention";
+"state.blocked" = "Waiting on something else";
+"state.failed" = "Could not be checked";
+"state.unknown" = "Not checked yet";
+
+/* Severities */
+"severity.ok" = "Ready";
+"severity.notice" = "Notice";
+"severity.drift" = "Drift";
+"severity.risk" = "Risk";
+
+/* Faults — every one has a title and a remedy. No exceptions. */
+"fault.recipeMissing.title" = "The recipe for %{recipe} is missing.";
+"fault.recipeMissing.remedy" = "Restore it with “foodtruck pantry restore”, which rebuilds the pantry from the last known-good commit.";
+"fault.recipeMalformed.title" = "The recipe for %{recipe} could not be read.";
+"fault.recipeMalformed.remedy" = "Run “foodtruck lint recipes” to see which line is at fault, or roll back with “foodtruck pantry restore”.";
+"fault.verbUnsupported.title" = "%{recipe} does not know how to %{verb}.";
+"fault.verbUnsupported.remedy" = "This is expected for some recipes. Nothing is wrong and no action is needed.";
+"fault.engineUnavailable.title" = "%{recipe} needs the %{engine} runner, which is not installed yet.";
+"fault.engineUnavailable.remedy" = "Converge “%{unlock}” first — FoodTruck can do this for you.";
+"fault.unexpectedExit.title" = "%{recipe} stopped unexpectedly while running %{verb}.";
+"fault.unexpectedExit.remedy" = "Run it again — converge is safe to repeat and picks up where it stopped. If it fails the same way twice, the diagnostics below say why.";
+"fault.malformedReport.title" = "%{recipe} reported something FoodTruck could not read.";
+"fault.malformedReport.remedy" = "The recipe is at fault, not your machine. Run “foodtruck lint recipes %{recipe}”.";
+"fault.timedOut.title" = "%{recipe} did not finish within its time budget.";
+"fault.timedOut.remedy" = "It was stopped safely. Check your network, then try again — converge is safe to re-run.";
+"fault.readOnlyViolation.title" = "%{recipe} tried to change your machine while only inspecting it.";
+"fault.readOnlyViolation.remedy" = "FoodTruck blocked the change. This recipe is not trustworthy — report it and keep it disabled.";
+"fault.integrityFailure.title" = "A download for %{recipe} did not match its expected checksum.";
+"fault.integrityFailure.remedy" = "FoodTruck discarded it and changed nothing. This can mean a mirror is out of date, or that the download was tampered with. Do not retry on an untrusted network.";
+"fault.cancelled.title" = "%{recipe} was cancelled.";
+"fault.cancelled.remedy" = "Nothing was left half-finished. Run it again whenever you like.";
+
+/* Blast radius */
+"blast.contained" = "Only FoodTruck's own folder";
+"blast.home" = "Your home folder";
+"blast.system" = "System locations";
+"blast.privileged" = "Needs your password";
+
+/* Built-in recipes */
+"recipe.core.locations.name" = "Workspace";
+"recipe.core.locations.summary" = "FoodTruck's own folders, in the XDG locations your dotfiles expect.";
+"recipe.core.toolbox.name" = "Toolbox";
+"recipe.core.toolbox.summary" = "The tools FoodTruck runs for itself, each pinned to a version and verified by checksum.";
+
+/* Findings */
+"finding.dir.missing" = "%{path} does not exist yet.";
+"finding.dir.unwritable" = "%{path} exists but FoodTruck cannot write to it.";
+"finding.tool.absent" = "%{tool} is not installed.";
+"finding.tool.unpinned" = "%{tool} is installed but not pinned to a version.";
+"finding.tool.stale" = "%{tool} is at %{observed}; the profile asks for %{desired}.";
+"finding.task.drift" = "%{task}";
+
+"recipe.core.pantry.name" = "Pantry";
+"recipe.core.pantry.summary" = "The recipes on this machine, including any you have edited yourself.";
+"recipe.tool.brew.name" = "Homebrew";
+"recipe.tool.brew.summary" = "Homebrew and everything your Brewfile asks for.";
+"finding.recipe.notInstalled" = "The %{recipe} recipe has not been copied to your pantry yet.";
+"finding.recipe.modified" = "You have edited the %{recipe} recipe.";
+"finding.recipe.modified.remedy" = "FoodTruck will leave your version alone. To go back to the shipped one, delete it from your pantry and converge again.";
+"finding.task.manual.remedy" = "This step needs you rather than FoodTruck. Open the recipe to see what it expects.";
+"finding.blast.refused" = "%{recipe} would change %{blast}, and this run is limited to %{ceiling}.";
+"finding.blast.refused.remedy" = "Nothing was changed. Run it from a session that allows it, or on a machine you are willing to modify.";
+"finding.pins.missing" = "FoodTruck cannot find the list of tools it is supposed to install.";
+
+/* Spoken by VoiceOver when a run finishes. Says the outcome, not the layout. */
+"a11y.announce.clean" = "Check complete. Everything is where it should be.";
+"a11y.announce.drift" = "Check complete. %{drift} need attention, %{blocked} waiting, %{failed} failed.";
+"a11y.status" = "Status: %{state}";
+"a11y.recipe.row" = "%{name}, %{state}, %{findings} findings";
+"a11y.busy" = "Checking your machine";
+
+/* Window */
+"window.title" = "FoodTruck";
+"action.audit" = "Check Again";
+"action.audit.help" = "Look at your machine and report what has drifted. Changes nothing.";
+"action.converge" = "Fix What Can Be Fixed";
+"action.converge.help" = "Apply every change FoodTruck can make safely. Safe to run more than once.";
+"action.converge.one" = "Fix This";
+"empty.title" = "Nothing checked yet";
+"empty.body" = "Check your machine to see what matches your profile and what has drifted. Nothing is changed until you ask for it.";
+"detail.findings" = "What needs attention";
+"detail.facts" = "What FoodTruck found";
+"detail.blast" = "Can change";
+"detail.clean" = "Everything this recipe asks for is already true.";
+"summary.attention.one" = "1 needs attention";
+"summary.attention.other" = "%{count} need attention";
+"summary.clean" = "Everything is where it should be";
+"summary.hint" = "Run `foodtruck converge` to fix what can be fixed.";
+"fault.detail.hint" = "FOODTRUCK_DEBUG=1 shows the raw output.";
+"findings.more.one" = "1 more";
+"findings.more.other" = "%{count} more";
+
+"summary.drift.one" = "1 needs attention";
+"summary.drift.other" = "%{count} need attention";
+"summary.blocked.one" = "1 waiting";
+"summary.blocked.other" = "%{count} waiting";
+"summary.failed.one" = "1 failed";
+"summary.failed.other" = "%{count} failed";
+/* Separator between clauses in a list. Some languages do not use a comma. */
+"list.separator" = ", ";

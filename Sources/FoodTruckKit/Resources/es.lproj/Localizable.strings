@@ -1,0 +1,100 @@
+/* FoodTruck — Español.
+   Los marcadores %{nombre} pueden reordenarse libremente; se sustituyen por
+   nombre, no por posición, precisamente para que esto sea posible. */
+
+"app.name" = "FoodTruck";
+"app.tagline" = "Mantiene honesto el entorno de desarrollo de tu Mac.";
+
+"state.converged" = "Listo";
+"state.drift" = "Requiere atención";
+"state.blocked" = "Esperando a otra cosa";
+"state.failed" = "No se pudo comprobar";
+"state.unknown" = "Sin comprobar";
+
+"severity.ok" = "Listo";
+"severity.notice" = "Aviso";
+"severity.drift" = "Desviación";
+"severity.risk" = "Riesgo";
+
+"fault.recipeMissing.title" = "Falta la receta de %{recipe}.";
+"fault.recipeMissing.remedy" = "Restáurala con «foodtruck pantry restore», que reconstruye la despensa desde el último estado correcto conocido.";
+"fault.recipeMalformed.title" = "No se pudo leer la receta de %{recipe}.";
+"fault.recipeMalformed.remedy" = "Ejecuta «foodtruck lint recipes» para ver qué línea falla, o vuelve atrás con «foodtruck pantry restore».";
+"fault.verbUnsupported.title" = "%{recipe} no sabe cómo hacer «%{verb}».";
+"fault.verbUnsupported.remedy" = "Es normal en algunas recetas. No ocurre nada malo y no hace falta hacer nada.";
+"fault.engineUnavailable.title" = "%{recipe} necesita el motor %{engine}, que aún no está instalado.";
+"fault.engineUnavailable.remedy" = "Converge «%{unlock}» primero — FoodTruck puede hacerlo por ti.";
+"fault.unexpectedExit.title" = "%{recipe} se detuvo de forma inesperada durante «%{verb}».";
+"fault.unexpectedExit.remedy" = "Vuelve a ejecutarlo: converger es seguro repetirlo y continúa donde se quedó. Si falla igual dos veces, el diagnóstico de abajo explica por qué.";
+"fault.malformedReport.title" = "%{recipe} informó de algo que FoodTruck no pudo leer.";
+"fault.malformedReport.remedy" = "El fallo está en la receta, no en tu Mac. Ejecuta «foodtruck lint recipes %{recipe}».";
+"fault.timedOut.title" = "%{recipe} no terminó dentro de su tiempo límite.";
+"fault.timedOut.remedy" = "Se detuvo de forma segura. Comprueba tu conexión y vuelve a intentarlo — converger se puede repetir sin riesgo.";
+"fault.readOnlyViolation.title" = "%{recipe} intentó modificar tu Mac cuando solo debía inspeccionarlo.";
+"fault.readOnlyViolation.remedy" = "FoodTruck bloqueó el cambio. Esta receta no es fiable: repórtala y déjala desactivada.";
+"fault.integrityFailure.title" = "Una descarga de %{recipe} no coincide con su suma de verificación.";
+"fault.integrityFailure.remedy" = "FoodTruck la descartó y no cambió nada. Puede ser una réplica desactualizada, o que la descarga haya sido manipulada. No lo reintentes en una red que no sea de confianza.";
+"fault.cancelled.title" = "Se canceló %{recipe}.";
+"fault.cancelled.remedy" = "No quedó nada a medias. Vuelve a ejecutarlo cuando quieras.";
+
+"blast.contained" = "Solo la carpeta de FoodTruck";
+"blast.home" = "Tu carpeta de inicio";
+"blast.system" = "Ubicaciones del sistema";
+"blast.privileged" = "Requiere tu contraseña";
+
+"recipe.core.locations.name" = "Espacio de trabajo";
+"recipe.core.locations.summary" = "Las carpetas propias de FoodTruck, en las ubicaciones XDG que esperan tus dotfiles.";
+"recipe.core.toolbox.name" = "Herramientas";
+"recipe.core.toolbox.summary" = "Las herramientas que FoodTruck ejecuta para sí mismo, cada una fijada a una versión y verificada por suma de comprobación.";
+"recipe.core.pantry.name" = "Despensa";
+"recipe.core.pantry.summary" = "Las recetas de este Mac, incluidas las que hayas modificado tú.";
+"recipe.tool.brew.name" = "Homebrew";
+"recipe.tool.brew.summary" = "Homebrew y todo lo que pide tu Brewfile.";
+
+"finding.dir.missing" = "%{path} todavía no existe.";
+"finding.dir.unwritable" = "%{path} existe, pero FoodTruck no puede escribir en él.";
+"finding.tool.absent" = "%{tool} no está instalado.";
+"finding.tool.unpinned" = "%{tool} está instalado, pero no fijado a una versión.";
+"finding.tool.stale" = "%{tool} está en %{observed}; el perfil pide %{desired}.";
+"finding.task.drift" = "%{task}";
+"finding.task.manual.remedy" = "Este paso te corresponde a ti, no a FoodTruck. Abre la receta para ver qué espera.";
+"finding.recipe.notInstalled" = "La receta %{recipe} aún no se ha copiado a tu despensa.";
+"finding.recipe.modified" = "Has modificado la receta %{recipe}.";
+"finding.recipe.modified.remedy" = "FoodTruck dejará tu versión intacta. Para volver a la original, bórrala de tu despensa y converge de nuevo.";
+"finding.pins.missing" = "FoodTruck no encuentra la lista de herramientas que debe instalar.";
+"finding.blast.refused" = "%{recipe} cambiaría %{blast}, y esta ejecución se limita a %{ceiling}.";
+"finding.blast.refused.remedy" = "No se cambió nada. Ejecútalo desde una sesión que lo permita, o en un Mac que estés dispuesto a modificar.";
+
+"a11y.announce.clean" = "Comprobación terminada. Todo está en su sitio.";
+"a11y.announce.drift" = "Comprobación terminada. %{drift} requieren atención, %{blocked} en espera, %{failed} con error.";
+"a11y.status" = "Estado: %{state}";
+"a11y.recipe.row" = "%{name}, %{state}, %{findings} hallazgos";
+"a11y.busy" = "Comprobando tu Mac";
+
+"window.title" = "FoodTruck";
+"action.audit" = "Comprobar de nuevo";
+"action.audit.help" = "Examina tu Mac e informa de lo que se ha desviado. No cambia nada.";
+"action.converge" = "Arreglar lo posible";
+"action.converge.help" = "Aplica todos los cambios que FoodTruck puede hacer con seguridad. Se puede repetir sin riesgo.";
+"action.converge.one" = "Arreglar esto";
+"empty.title" = "Nada comprobado todavía";
+"empty.body" = "Comprueba tu Mac para ver qué coincide con tu perfil y qué se ha desviado. No se cambia nada hasta que lo pidas.";
+"detail.findings" = "Qué requiere atención";
+"detail.facts" = "Qué encontró FoodTruck";
+"detail.blast" = "Puede cambiar";
+"detail.clean" = "Todo lo que pide esta receta ya se cumple.";
+"summary.attention.one" = "1 requiere atención";
+"summary.attention.other" = "%{count} requieren atención";
+"summary.clean" = "Todo está en su sitio";
+"summary.hint" = "Ejecuta «foodtruck converge» para arreglar lo que se pueda.";
+"fault.detail.hint" = "FOODTRUCK_DEBUG=1 muestra la salida sin procesar.";
+"findings.more.one" = "1 más";
+"findings.more.other" = "%{count} más";
+
+"summary.drift.one" = "1 requiere atención";
+"summary.drift.other" = "%{count} requieren atención";
+"summary.blocked.one" = "1 en espera";
+"summary.blocked.other" = "%{count} en espera";
+"summary.failed.one" = "1 con error";
+"summary.failed.other" = "%{count} con error";
+"list.separator" = ", ";

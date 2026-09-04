@@ -1,0 +1,40 @@
+{
+  "schema": "foodtruck.pins/1",
+  "_comment": [
+    "Every binary FoodTruck installs for its own use, pinned by digest.",
+    "",
+    "This file is the SBOM. One place to review, one diff to audit, and a",
+    "mismatch discards the download and changes nothing.",
+    "",
+    "It is read from inside the SIGNED APP BUNDLE, never from the writable",
+    "pantry. A user may fork a recipe -- that is the point of the pantry -- but",
+    "a forked recipe must not be able to repoint a download at another host.",
+    "",
+    "'provenance' is not decoration: it records what integrity guarantee the",
+    "upstream actually offers, so a reviewer can see where the trust ends.",
+    "'verify' is the command that re-derives the digest from upstream, so",
+    "`foodtruck lint pins` can prove these values still match."
+  ],
+  "artifacts": [
+    {
+      "id": "task",
+      "version": "3.53.1",
+      "url": "https://github.com/go-task/task/releases/download/v3.53.1/task_darwin_arm64.tar.gz",
+      "sha256": "85d2d96c2380b33d7855b07b3f7a20dc7ca0eda999a26efa0fb5f6f32b366cd7",
+      "binary": "task",
+      "provides": "engine:taskfile",
+      "provenance": "go-task publishes task_checksums.txt but no signature and no attestation (verified: the attestations API returns 404, .goreleaser.yml has no signs: block). This digest is the only integrity anchor available.",
+      "verify": "curl -fsSL https://github.com/go-task/task/releases/download/v3.53.1/task_checksums.txt | grep task_darwin_arm64.tar.gz"
+    },
+    {
+      "id": "mise",
+      "version": "2026.8.8",
+      "url": "https://github.com/jdx/mise/releases/download/v2026.8.8/mise-v2026.8.8-macos-arm64.tar.gz",
+      "sha256": "770e15e821fd354496e728c11eb34a2b48bf7fee3dd444d09babcf64decea3aa",
+      "binary": "mise/bin/mise",
+      "provides": "engine:mise",
+      "provenance": "jdx/mise publishes SHASUMS256.txt per release and a GPG signature for install.sh (key 24853EC9F655CE80B48E6C3A8B81C9D17413A06D). We pin the release archive digest directly, which avoids trusting the install script at all.",
+      "verify": "curl -fsSL https://github.com/jdx/mise/releases/download/v2026.8.8/SHASUMS256.txt | grep macos-arm64.tar.gz"
+    }
+  ]
+}

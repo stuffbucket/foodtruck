@@ -1,0 +1,62 @@
+# Homebrew, expressed the only way FoodTruck understands anything: as tasks
+# named `ensure:*` that each declare a `status:`.
+#
+# `status:` is go-task's own idempotency predicate — all commands exit 0 means
+# "already true, skip". FoodTruck audits this recipe with a single
+# `task --list-all --json`, which evaluates every `status:` in parallel and runs
+# no `cmds:` at all. That is why an audit provably cannot change your machine:
+# it is not restraint on our part, it is the only code path that exists.
+#
+# Nothing in FoodTruck's source mentions Homebrew. Deleting this directory
+# deletes Homebrew support; adding a sibling adds a tool.
+version: '3'
+
+vars:
+  # Apple silicon and Intel disagree about the prefix, and a recipe that guessed
+  # would be wrong on someone's machine. Ask brew, fall back to the arch default.
+  BREW_PREFIX:
+    sh: command -v brew >/dev/null 2>&1 && brew --prefix || echo /opt/homebrew
+
+tasks:
+  # `manual:` rather than `ensure:` — deliberately. Homebrew's installer wants a
+  # TTY and an admin password, and an app that quietly triggered a sudo prompt
+  # would be the single worst thing a tool in this category can do. FoodTruck
+  # audits this step exactly like any other, reports it when it is unmet, and
+  # hands the person the command. It will never run it for them.
+  manual:installed:
+    desc: Homebrew is installed
+    summary: >-
+      Install Homebrew by running this in Terminal, then check again:
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    status:
+      - test -x "{{.BREW_PREFIX}}/bin/brew"
+
+  ensure:brewfile-satisfied:
+    desc: Every formula in your Brewfile is installed
+    deps: [manual:installed]
+    status:
+      # Two ways to already be satisfied, and the first one matters: someone with
+      # no Brewfile has declared nothing, which is converged, not drift. Reading
+      # "absent" as "broken" would nag every person who does not keep a Brewfile,
+      # and nagging is how a tool like this gets uninstalled.
+      # `brew bundle check` itself is a pure query: exit 0 = satisfied, 1 = not.
+      - >-
+        test ! -f "{{.BREWFILE}}" ||
+        "{{.BREW_PREFIX}}/bin/brew" bundle check --file="{{.BREWFILE}}" >/dev/null 2>&1
+    cmds:
+      - '"{{.BREW_PREFIX}}/bin/brew" bundle --file="{{.BREWFILE}}"'
+    vars:
+      BREWFILE: '{{.BREWFILE | default (printf "%s/Brewfile" .FOODTRUCK_CONFIG_DIR)}}'
+
+  # Optional. FoodTruck merges whatever this prints over the structural
+  # findings above; a recipe that omits it is still a complete recipe.
+  audit:
+    silent: true
+    cmds:
+      - |
+        if command -v brew >/dev/null 2>&1; then
+          printf '{"schema":"foodtruck.report/1","findings":[],"facts":{"version":"%s","prefix":"%s"}}\n' \
+            "$(brew --version | head -1 | sed 's/Homebrew //')" "{{.BREW_PREFIX}}"
+        else
+          printf '{"schema":"foodtruck.report/1","findings":[],"facts":{}}\n'
+        fi

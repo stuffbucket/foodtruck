@@ -1,0 +1,46 @@
+# FoodTruck's own development verbs.
+#
+# The same shape the recipes use -- `ensure:*` tasks with `status:` predicates --
+# because a tool that manages environments should be able to manage its own. If
+# the contract is awkward to write against here, it is awkward everywhere.
+version: '3'
+
+vars:
+  BIN: .build/debug/foodtruck
+
+tasks:
+  default:
+    cmds: [{task: check}]
+
+  build:
+    desc: Build the CLI and the app
+    sources: ['Sources/**/*.swift', 'Package.swift']
+    generates: ['{{.BIN}}']
+    cmds: [swift build]
+
+  test:
+    desc: Run the self-test that ships inside the binary
+    deps: [build]
+    cmds: ['{{.BIN}} selftest']
+
+  test:clean:
+    desc: Run the self-test and prove it left the host untouched
+    deps: [build]
+    cmds: ['./scripts/tripwire.sh -- {{.BIN}} selftest']
+
+  demo:
+    desc: Full audit/converge loop in a throwaway root — touches nothing real
+    deps: [build]
+    cmds:
+      - |
+        set -eu
+        ROOT="$(mktemp -d)/ft"
+        export FOODTRUCK_ROOT="$ROOT" FOODTRUCK_PANTRY_SEED="$PWD/Pantry/recipes"
+        echo "### audit — a machine with nothing set up"; {{.BIN}} audit || true
+        echo; echo "### converge"; {{.BIN}} converge || true
+        echo; echo "### audit again — idempotence"; {{.BIN}} audit || true
+        rm -rf "$ROOT"
+
+  check:
+    desc: Everything CI runs
+    cmds: [{task: test:clean}]
