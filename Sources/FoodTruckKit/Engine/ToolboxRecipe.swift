@@ -56,6 +56,7 @@ struct ToolboxRecipe: BuiltinRecipe {
             provides: ["toolbox"],
             verbs: [.detect, .audit, .plan, .converge, .verify],
             blast: .contained,
+            scope: .housekeeping,
             timeout: 180,
             symbol: "wrench.and.screwdriver"
         )

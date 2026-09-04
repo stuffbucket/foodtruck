@@ -35,7 +35,7 @@ tasks:
       - |
         set -eu
         ROOT="$(mktemp -d)/ft"
-        export FOODTRUCK_ROOT="$ROOT" FOODTRUCK_PANTRY_SEED="$PWD/Pantry/recipes"
+        export FOODTRUCK_ROOT="$ROOT" FOODTRUCK_COOKBOOK_SEED="$PWD/Cookbook/recipes"
         echo "### audit — a machine with nothing set up"; {{.BIN}} audit || true
         echo; echo "### converge"; {{.BIN}} converge || true
         echo; echo "### audit again — idempotence"; {{.BIN}} audit || true

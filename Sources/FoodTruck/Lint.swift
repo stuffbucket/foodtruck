@@ -56,7 +56,7 @@ enum Lint {
     static func pins(_ locations: Locations) async -> Int32 {
         guard let manifest = PinManifest.load(locations) else {
             let message = "foodtruck lint pins: no pin manifest found. "
-                + "Set FOODTRUCK_PANTRY_SEED, or run from the app bundle.\n"
+                + "Set FOODTRUCK_COOKBOOK_SEED, or run from the app bundle.\n"
             FileHandle.standardError.write(Data(message.utf8))
             return 1
         }

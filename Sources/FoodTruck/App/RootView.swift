@@ -9,19 +9,39 @@ struct RootView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            if let id = model.selection, let recipe = model.recipes.first(where: { $0.id == id }) {
+            if let id = model.selection,
+               let recipe = model.visibleRecipes.first(where: { $0.id == id }) {
                 RecipeDetail(model: model, recipe: recipe)
             } else {
                 ContentUnavailableView(t("empty.title"), systemImage: "shippingbox",
                                        description: Text(t("empty.body")))
             }
         }
+        .safeAreaInset(edge: .top) {
+            if let fault = model.housekeepingFault {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t(fault.title, fault.args)).fontWeight(.medium)
+                        Text(t(fault.remedy, fault.args))
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .background(.bar)
+                .accessibilityElement(children: .combine)
+            }
+        }
         .navigationTitle(t("window.title"))
         .toolbar { toolbar }
         .task {
-            // Audit on open. It changes nothing, so there is no reason to make
-            // someone ask for the answer they came here for.
-            if !model.hasAnyResult { await model.audit() }
+            // Settle FoodTruck's own house, then audit -- both without being
+            // asked. Auditing changes nothing, so there is no reason to make
+            // someone press a button for the answer they opened the app to get.
+            if !model.hasAnyResult { await model.start() }
         }
         .onChange(of: model.announcement) { _, new in
             guard let new else { return }
@@ -32,7 +52,7 @@ struct RootView: View {
 
     private var sidebar: some View {
         List(selection: $model.selection) {
-            ForEach(model.recipes) { recipe in
+            ForEach(model.visibleRecipes) { recipe in
                 RecipeRow(recipe: recipe,
                           outcome: model.outcome(for: recipe.id),
                           findings: model.findings(for: recipe.id).count)

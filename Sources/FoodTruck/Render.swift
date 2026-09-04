@@ -47,6 +47,14 @@ enum Render {
         }
     }
 
+    /// Said once, plainly, when FoodTruck has not finished installing itself.
+    /// One sentence and one command -- not a list of internal chores.
+    static func setupNeeded() {
+        print(paint("• " + t("setup.needed"), "33"))
+        print("  " + paint(t("setup.needed.remedy"), "36"))
+        print("")
+    }
+
     static func service(_ service: Service, faults: [RecipeFault]) {
         for fault in faults { self.fault(fault) }
 
@@ -73,6 +81,11 @@ enum Render {
             }
             if case .failed(let f) = r.outcome { fault(f, indent: "             ") }
         }
+
+        // Nothing to report on is not the same as nothing wrong. Saying
+        // "everything is where it should be" about an empty list is exactly the
+        // confidently-wrong answer this whole path exists to avoid.
+        guard !service.results.isEmpty else { return }
 
         print("")
         let clean = service.isClean

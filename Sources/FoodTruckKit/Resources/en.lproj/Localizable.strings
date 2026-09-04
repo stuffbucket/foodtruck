@@ -60,13 +60,11 @@
 "finding.tool.stale" = "%{tool} is at %{observed}; the profile asks for %{desired}.";
 "finding.task.drift" = "%{task}";
 
-"recipe.core.pantry.name" = "Pantry";
-"recipe.core.pantry.summary" = "The recipes on this machine, including any you have edited yourself.";
+"recipe.core.cookbook.name" = "Cookbook";
+"recipe.core.cookbook.summary" = "The recipes FoodTruck knows how to follow on this Mac.";
 "recipe.tool.brew.name" = "Homebrew";
 "recipe.tool.brew.summary" = "Homebrew and everything your Brewfile asks for.";
-"finding.recipe.notInstalled" = "The %{recipe} recipe has not been copied to your pantry yet.";
-"finding.recipe.modified" = "You have edited the %{recipe} recipe.";
-"finding.recipe.modified.remedy" = "FoodTruck will leave your version alone. To go back to the shipped one, delete it from your pantry and converge again.";
+"finding.recipe.notInstalled" = "FoodTruck could not install its %{recipe} recipe.";
 "finding.task.manual.remedy" = "This step needs you rather than FoodTruck. Open the recipe to see what it expects.";
 "finding.blast.refused" = "%{recipe} would change %{blast}, and this run is limited to %{ceiling}.";
 "finding.blast.refused.remedy" = "Nothing was changed. Run it from a session that allows it, or on a machine you are willing to modify.";
@@ -108,3 +106,7 @@
 "summary.failed.other" = "%{count} failed";
 /* Separator between clauses in a list. Some languages do not use a comma. */
 "list.separator" = ", ";
+"recipe.customised" = "Customised";
+"recipe.customised.help" = "You have edited this recipe. FoodTruck will leave your version alone.";
+"setup.needed" = "FoodTruck has not finished setting itself up on this Mac.";
+"setup.needed.remedy" = "Run `foodtruck converge` once. It only writes inside FoodTruck's own folder.";

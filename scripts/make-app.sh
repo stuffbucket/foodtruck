@@ -34,9 +34,9 @@ done
 # The shipped recipes and the pin manifest. Read-only here on purpose: this copy
 # is inside the signed bundle, so a forked recipe in the user's pantry can never
 # repoint a download.
-mkdir -p "$APP/Contents/Resources/Pantry"
-cp -R Pantry/recipes "$APP/Contents/Resources/Pantry/"
-cp Pantry/pins.json "$APP/Contents/Resources/Pantry/"
+mkdir -p "$APP/Contents/Resources/Cookbook"
+cp -R Cookbook/recipes "$APP/Contents/Resources/Cookbook/"
+cp Cookbook/pins.json "$APP/Contents/Resources/Cookbook/"
 
 LOCALES=$(for d in Sources/FoodTruckKit/Resources/*.lproj; do
   printf '<string>%s</string>' "$(basename "$d" .lproj)"; done)

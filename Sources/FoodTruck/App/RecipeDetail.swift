@@ -93,6 +93,13 @@ struct RecipeDetail: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
+            if recipe.customised {
+                Label(t("recipe.customised"), systemImage: "pencil")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
+                    .help(t("recipe.customised.help"))
+            }
             StatusChip(outcome: result?.outcome)
                 .animation(reduceMotion ? nil : .snappy, value: result?.outcome)
         }

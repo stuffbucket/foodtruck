@@ -12,30 +12,21 @@ import CryptoKit
 ///
 /// That distinction is the whole point: diversity that was chosen must survive
 /// convergence; diversity that was accidental must not.
-struct PantryRecipe: BuiltinRecipe {
+struct CookbookRecipe: BuiltinRecipe {
     var descriptor: Recipe {
         Recipe(
-            id: "core.pantry",
-            name: "recipe.core.pantry.name",
-            summary: "recipe.core.pantry.summary",
+            id: "core.cookbook",
+            name: "recipe.core.cookbook.name",
+            summary: "recipe.core.cookbook.summary",
             engine: "builtin",
             requires: ["core.locations"],
-            provides: ["pantry"],
+            provides: ["cookbook"],
             verbs: [.detect, .audit, .plan, .converge, .verify],
             blast: .contained,
+            scope: .housekeeping,
             timeout: 20,
             symbol: "books.vertical"
         )
-    }
-
-    private func digest(_ url: URL) -> String {
-        // Hash the manifest and the Taskfile together: either changing is a
-        // change to the recipe.
-        var hasher = SHA256()
-        for name in ["recipe.json", "Taskfile.yml"] {
-            if let d = try? Data(contentsOf: url.appending(path: name)) { hasher.update(data: d) }
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     func audit(_ context: RunContext) async -> RecipeReport {
@@ -49,20 +40,12 @@ struct PantryRecipe: BuiltinRecipe {
             guard FileManager.default.fileExists(
                 atPath: src.appending(path: "recipe.json").path) else { continue }
             let id = src.lastPathComponent
-            let dst = context.locations.recipes.appending(path: id)
-            report.facts[id] = String(digest(src).prefix(12))
-
-            if !FileManager.default.fileExists(atPath: dst.path) {
+            if !FileManager.default.fileExists(
+                atPath: context.locations.recipes.appending(path: id).path) {
                 report.findings.append(Finding(
-                    id: "pantry.absent:\(id)", severity: .drift,
+                    id: "cookbook.absent:\(id)", severity: .drift,
                     title: "finding.recipe.notInstalled", args: ["recipe": id],
                     observed: "absent", desired: "installed"))
-            } else if digest(src) != digest(dst) {
-                report.findings.append(Finding(
-                    id: "pantry.modified:\(id)", severity: .notice,
-                    title: "finding.recipe.modified", args: ["recipe": id],
-                    observed: "modified", desired: "as shipped",
-                    fixable: false, remedy: "finding.recipe.modified.remedy"))
             }
         }
         return report

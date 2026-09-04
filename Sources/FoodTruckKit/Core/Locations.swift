@@ -77,19 +77,22 @@ public struct Locations: Sendable, Equatable {
     /// a checkout, and the test harness, use the same code path as the shipped
     /// app rather than a special case.
     private static func seedURL(_ environment: [String: String]) -> URL? {
-        if let o = environment["FOODTRUCK_PANTRY_SEED"], !o.isEmpty {
+        if let o = environment["FOODTRUCK_COOKBOOK_SEED"], !o.isEmpty {
             return URL(filePath: o)
         }
-        return Bundle.main.url(forResource: "Pantry", withExtension: nil)?
+        return Bundle.main.url(forResource: "Cookbook", withExtension: nil)?
             .appending(path: "recipes")
     }
 
     // MARK: - Derived paths
 
-    /// The git-backed store. `main` is last-known-good.
-    public var pantry: URL { data.appending(path: "pantry") }
-    /// Recipes shipped or fetched. Read-only at runtime.
-    public var recipes: URL { pantry.appending(path: "recipes") }
+    /// The git-backed store of recipes. `main` is last-known-good.
+    ///
+    /// Named for what it holds. Recipes live in a cookbook; a pantry holds
+    /// ingredients, and "copy the recipe to your pantry" described neither.
+    public var cookbook: URL { data.appending(path: "cookbook") }
+    /// Recipes on disk. Editable -- a recipe you have changed is yours.
+    public var recipes: URL { cookbook.appending(path: "recipes") }
     /// Tools FoodTruck has unlocked for itself. Never on the user's PATH
     /// unless they ask -- this directory is FoodTruck's, not the system's.
     public var toolbox: URL { data.appending(path: "toolbox/bin") }

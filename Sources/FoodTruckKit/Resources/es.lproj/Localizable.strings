@@ -46,8 +46,8 @@
 "recipe.core.locations.summary" = "Las carpetas propias de FoodTruck, en las ubicaciones XDG que esperan tus dotfiles.";
 "recipe.core.toolbox.name" = "Herramientas";
 "recipe.core.toolbox.summary" = "Las herramientas que FoodTruck ejecuta para sí mismo, cada una fijada a una versión y verificada por suma de comprobación.";
-"recipe.core.pantry.name" = "Despensa";
-"recipe.core.pantry.summary" = "Las recetas de este Mac, incluidas las que hayas modificado tú.";
+"recipe.core.cookbook.name" = "Recetario";
+"recipe.core.cookbook.summary" = "Las recetas que FoodTruck sabe seguir en este Mac.";
 "recipe.tool.brew.name" = "Homebrew";
 "recipe.tool.brew.summary" = "Homebrew y todo lo que pide tu Brewfile.";
 
@@ -58,9 +58,7 @@
 "finding.tool.stale" = "%{tool} está en %{observed}; el perfil pide %{desired}.";
 "finding.task.drift" = "%{task}";
 "finding.task.manual.remedy" = "Este paso te corresponde a ti, no a FoodTruck. Abre la receta para ver qué espera.";
-"finding.recipe.notInstalled" = "La receta %{recipe} aún no se ha copiado a tu despensa.";
-"finding.recipe.modified" = "Has modificado la receta %{recipe}.";
-"finding.recipe.modified.remedy" = "FoodTruck dejará tu versión intacta. Para volver a la original, bórrala de tu despensa y converge de nuevo.";
+"finding.recipe.notInstalled" = "FoodTruck no pudo instalar su receta %{recipe}.";
 "finding.pins.missing" = "FoodTruck no encuentra la lista de herramientas que debe instalar.";
 "finding.blast.refused" = "%{recipe} cambiaría %{blast}, y esta ejecución se limita a %{ceiling}.";
 "finding.blast.refused.remedy" = "No se cambió nada. Ejecútalo desde una sesión que lo permita, o en un Mac que estés dispuesto a modificar.";
@@ -98,3 +96,7 @@
 "summary.failed.one" = "1 con error";
 "summary.failed.other" = "%{count} con error";
 "list.separator" = ", ";
+"recipe.customised" = "Personalizada";
+"recipe.customised.help" = "Has editado esta receta. FoodTruck dejará tu versión intacta.";
+"setup.needed" = "FoodTruck aún no ha terminado de instalarse en este Mac.";
+"setup.needed.remedy" = "Ejecuta «foodtruck converge» una vez. Solo escribe dentro de la carpeta de FoodTruck.";

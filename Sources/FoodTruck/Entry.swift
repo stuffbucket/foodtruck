@@ -33,9 +33,11 @@ enum CLI {
 
         switch command {
         case "audit", "status":
-            return await inspect(locations, verb: .audit, json: args.contains("--json"))
+            return await inspect(locations, verb: .audit, json: args.contains("--json"),
+                                 all: args.contains("--all"))
         case "plan":
-            return await inspect(locations, verb: .plan, json: args.contains("--json"))
+            return await inspect(locations, verb: .plan, json: args.contains("--json"),
+                                 all: args.contains("--all"))
         case "converge", "apply":
             return await converge(locations, dryRun: args.contains("--dry-run"),
                                   only: Set(args.filter { !$0.hasPrefix("-") }))
@@ -47,7 +49,7 @@ enum CLI {
             }
             return 0
         case "recipes", "list":
-            let (recipes, _) = Pantry.load(locations)
+            let (recipes, _) = Cookbook.load(locations)
             for r in recipes {
                 print("\(r.id.padding(toLength: 28, withPad: " ", startingAt: 0)) "
                       + "\(r.engine.padding(toLength: 10, withPad: " ", startingAt: 0)) "
@@ -79,7 +81,9 @@ enum CLI {
     static let usage = """
     foodtruck — keeps your Mac's development environment honest.
 
-      audit [--json]        Report what has drifted. Changes nothing.
+      audit [--json] [--all]
+                            Report what has drifted. Changes nothing.
+                            --all also shows FoodTruck's own housekeeping.
       plan  [--json]        Show what converge would do. Changes nothing.
       converge [--dry-run] [recipe...]
                             Make it so. Safe to run twice.
@@ -96,17 +100,41 @@ enum CLI {
 
     // MARK: - Commands
 
-    static func inspect(_ locations: Locations, verb: Verb, json: Bool) async -> Int32 {
-        let (recipes, faults) = Pantry.load(locations)
+    static func inspect(
+        _ locations: Locations, verb: Verb, json: Bool, all: Bool
+    ) async -> Int32 {
+        let (recipes, faults) = Cookbook.load(locations)
         let kitchen = Kitchen(locations: locations, recipes: recipes)
-        let service = await kitchen.inspect(verb)
+        var service = await kitchen.inspect(verb)
+        // Same rule as the window: FoodTruck's own housekeeping is not news.
+        // `--all` is for us, and for anyone debugging FoodTruck itself.
+        // Housekeeping is hidden, but it must never be hidden *dishonestly*.
+        // On a machine where FoodTruck has not set itself up, there are no
+        // environment recipes to report, and silently answering "everything is
+        // fine" would be the worst possible lie -- confidently wrong about a
+        // machine we have not looked at. The window settles itself on launch;
+        // `audit` cannot, because it promises to change nothing. So it says so.
+        let chores = recipes.filter { $0.scope == .housekeeping }.map(\.id)
+        let unsettled = service.results.contains {
+            chores.contains($0.recipe) && $0.outcome != .converged
+        }
+        if !all {
+            let visible = Set(recipes.filter { $0.scope == .environment }.map(\.id))
+            service.results = service.results.filter { visible.contains($0.recipe) }
+        }
+        if unsettled && !all {
+            if json { return emitJSON(service, setupNeeded: true) }
+            Render.setupNeeded()
+            Render.service(service, faults: faults)
+            return 10
+        }
         if json { return emitJSON(service) }
         Render.service(service, faults: faults)
         return service.isClean ? 0 : 10
     }
 
     static func converge(_ locations: Locations, dryRun: Bool, only: Set<String>) async -> Int32 {
-        let (recipes, faults) = Pantry.load(locations)
+        let (recipes, faults) = Cookbook.load(locations)
         let kitchen = Kitchen(locations: locations, recipes: recipes)
         do {
             let service = try await kitchen.converge(
@@ -119,11 +147,12 @@ enum CLI {
         }
     }
 
-    static func emitJSON(_ service: Service) -> Int32 {
+    static func emitJSON(_ service: Service, setupNeeded: Bool = false) -> Int32 {
         let payload: [String: Any] = [
             "verb": service.verb.rawValue,
             "duration": service.duration,
-            "clean": service.isClean,
+            "clean": service.isClean && !setupNeeded,
+            "setupNeeded": setupNeeded,
             "recipes": service.results.map { r -> [String: Any] in
                 ["id": r.recipe, "outcome": Render.outcomeToken(r.outcome),
                  "findings": r.report.findings.map {
@@ -138,7 +167,7 @@ enum CLI {
             FileHandle.standardOutput.write(d)
             print("")
         }
-        return service.isClean ? 0 : 10
+        return (service.isClean && !setupNeeded) ? 0 : 10
     }
 }
 

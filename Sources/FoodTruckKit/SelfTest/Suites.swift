@@ -60,7 +60,7 @@ enum LocationSuite {
         },
         Case("The recipe environment carries no ambient variables") { s in
             let env = Exec.baseEnvironment(Locations(root: URL(filePath: "/tmp/ft-y")))
-            s.require(env["FOODTRUCK_PANTRY_SEED"] == nil, "host wiring must not leak to recipes")
+            s.require(env["FOODTRUCK_COOKBOOK_SEED"] == nil, "host wiring must not leak to recipes")
             s.require(env["PATH"]!.hasPrefix("/tmp/ft-y/data/toolbox/bin"),
                       "the toolbox comes first on PATH")
             s.require(!env["PATH"]!.contains("/opt/homebrew"),
@@ -101,6 +101,24 @@ enum GraphSuite {
                 s.equal(recipe, "a", "blamed the right recipe")
                 s.equal(missing, "ghost", "named the missing dependency")
             }
+        },
+        Case("Every builtin is housekeeping, and no recipe on disk is") { s in
+            // The rule that keeps FoodTruck's plumbing off the user's list. If a
+            // builtin ever becomes something a person should care about, it
+            // needs a real name and a real reason, not a default.
+            for recipe in builtins() {
+                s.equal(recipe.scope, .housekeeping,
+                        "\(recipe.id) would show up in the user's list")
+            }
+        },
+        Case("A recipe.json with no scope loads as the user's business") { s in
+            // Forward compatibility: a recipe written by someone else, before
+            // scope existed, is about their machine -- that is the safe default.
+            let json = #"{"id":"x","name":"n","summary":"s","engine":"taskfile"}"#
+            let recipe = try JSONDecoder().decode(Recipe.self, from: Data(json.utf8))
+            s.equal(recipe.scope, .environment, "defaults to environment")
+            s.equal(recipe.blast, .contained, "defaults to the safest blast radius")
+            s.require(!recipe.customised, "customised is derived, never decoded")
         },
         Case("The shipped recipes form a valid graph") { s in
             // Catches a typo in a `requires` before a user ever sees it.

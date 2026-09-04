@@ -22,6 +22,13 @@ final class AppModel {
     }
 
     private(set) var recipes: [Recipe] = []
+    /// What the person actually came to look at. Housekeeping is settled
+    /// silently before the first audit and never listed -- "a file has not been
+    /// copied yet", with a Fix button, is our plumbing, not their machine.
+    var visibleRecipes: [Recipe] { recipes.filter { $0.scope == .environment } }
+    /// Set only when housekeeping fails, which IS news: it means FoodTruck
+    /// cannot do its job. Shown as a banner, never as a row in the list.
+    private(set) var housekeepingFault: RecipeFault?
     private(set) var results: [String: VerbResult] = [:]
     private(set) var loadFaults: [RecipeFault] = []
     private(set) var activity: Activity = .idle
@@ -39,17 +46,50 @@ final class AppModel {
     }
 
     func reload() {
-        let (recipes, faults) = Pantry.load(locations)
+        let (recipes, faults) = Cookbook.load(locations)
         self.recipes = recipes
         self.loadFaults = faults
-        if selection == nil || !recipes.contains(where: { $0.id == selection }) {
-            selection = recipes.first?.id
+        if selection == nil || !visibleRecipes.contains(where: { $0.id == selection }) {
+            selection = visibleRecipes.first?.id
         }
     }
 
     private var kitchen: Kitchen { Kitchen(locations: locations, recipes: recipes) }
 
     // MARK: - Verbs
+
+    /// Get FoodTruck's own house in order, then look at the machine.
+    ///
+    /// Housekeeping converges without being asked, because there is nothing to
+    /// ask about: it writes only inside FoodTruck's own folder, and a person
+    /// opening the app has already consented to the app existing. It stays
+    /// silent unless it fails.
+    func start() async {
+        await settleHousekeeping()
+        reload()
+        await audit()
+    }
+
+    private func settleHousekeeping() async {
+        let chores = recipes.filter { $0.scope == .housekeeping }
+        guard !chores.isEmpty else { return }
+        activity = .auditing
+        defer { activity = .idle }
+        do {
+            let service = try await Kitchen(locations: locations, recipes: chores)
+                .converge(only: Set(chores.map(\.id)))
+            for result in service.results { results[result.recipe] = result }
+            if case .failed(let fault) = service.failed.first?.outcome {
+                housekeepingFault = fault
+            } else {
+                housekeepingFault = nil
+            }
+        } catch {
+            housekeepingFault = RecipeFault(
+                kind: .recipeMalformed, recipe: "core", verb: .converge,
+                args: ["recipe": "core"], detail: "\(error)")
+        }
+    }
 
     func audit() async {
         guard !activity.isBusy else { return }
@@ -91,10 +131,10 @@ final class AppModel {
     private func announce(_ service: Service) {
         // Spoken by VoiceOver, so it says the outcome rather than describing the
         // screen: someone who cannot see the table still learns what happened.
-        announcement = service.isClean
+        announcement = needingAttention == 0
             ? t("a11y.announce.clean")
             : t("a11y.announce.drift", [
-                "drift": String(service.drifted.count),
+                "drift": String(needingAttention),
                 "blocked": String(service.blocked.count),
                 "failed": String(service.failed.count),
               ])
@@ -106,15 +146,16 @@ final class AppModel {
     func findings(for id: String) -> [Finding] { results[id]?.report.findings ?? [] }
 
     var needingAttention: Int {
-        results.values.filter { $0.outcome == .drift }.count
+        visibleRecipes.filter { results[$0.id]?.outcome == .drift }.count
     }
     var hasAnyResult: Bool { !results.isEmpty }
 
     /// Whether converging everything would actually do anything, so the primary
     /// button can be disabled rather than doing nothing and looking broken.
     var hasFixableWork: Bool {
-        results.values.contains { result in
-            result.outcome == .drift && result.report.findings.contains(where: \.fixable)
+        visibleRecipes.contains { recipe in
+            guard let result = results[recipe.id], result.outcome == .drift else { return false }
+            return result.report.findings.contains(where: \.fixable)
         }
     }
 }
