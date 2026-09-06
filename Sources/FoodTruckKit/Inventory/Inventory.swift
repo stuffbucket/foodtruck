@@ -173,6 +173,29 @@ public struct Inventory: Codable, Sendable, Equatable {
         return byRuntime.filter { $0.value.count > 1 }.mapValues { $0.sorted() }
     }
 
+    /// Orders copies of one command by the search root they sit in.
+    ///
+    /// Wherever several copies exist and one has to be named -- the shim in a
+    /// shadowing pair, the `mise` a manager's version is read from -- the pick
+    /// has to follow some rule. Sorting by path makes it alphabetical, which is
+    /// stable and means nothing: `/opt/homebrew/bin/mise` wins over
+    /// `~/.local/bin/mise` because `/` sorts before `~`.
+    ///
+    /// So it follows FoodTruck's own search order instead: `/etc/paths` first,
+    /// then the manager directories. That is the nearest defensible thing to
+    /// "the copy you would get", and no more than that -- it is not the shell's
+    /// `PATH` and does not claim to be. `roots` travels in the snapshot so the
+    /// order actually used is readable rather than assumed.
+    public static func inSearchOrder(_ copies: [Installed], roots: [String]) -> [Installed] {
+        var order: [String: Int] = [:]
+        for (index, root) in roots.enumerated() where order[root] == nil { order[root] = index }
+        // A program sits directly in its root; the scan does not recurse.
+        func rank(_ tool: Installed) -> Int {
+            order[(tool.path as NSString).deletingLastPathComponent] ?? roots.count
+        }
+        return copies.sorted { (rank($0), $0.path) < (rank($1), $1.path) }
+    }
+
     /// Command names installed more than once at demonstrably different
     /// versions.
     ///
@@ -188,7 +211,7 @@ public struct Inventory: Codable, Sendable, Equatable {
     public var conflictingVersions: [String: [Installed]] {
         Dictionary(grouping: tools, by: \.name)
             .filter { _, copies in Set(copies.compactMap(\.version)).count > 1 }
-            .mapValues { $0.sorted { $0.path < $1.path } }
+            .mapValues { Self.inSearchOrder($0, roots: roots) }
     }
 
     /// Commands that exist both as a manager's shim and as a directly
@@ -205,7 +228,7 @@ public struct Inventory: Codable, Sendable, Equatable {
             .filter { _, copies in
                 copies.contains(where: \.shim) && copies.contains(where: { !$0.shim })
             }
-            .mapValues { $0.sorted { $0.path < $1.path } }
+            .mapValues { Self.inSearchOrder($0, roots: roots) }
     }
 
     /// Command names FoodTruck will actually run to ask what version they are.

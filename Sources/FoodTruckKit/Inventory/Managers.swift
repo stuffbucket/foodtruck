@@ -133,7 +133,7 @@ extension Inventory {
     /// Which managers are on this machine. Reads directories and looks at the
     /// programs already found; runs nothing.
     static func managers(
-        tools: [Installed], home: URL, systemRoot: URL
+        tools: [Installed], roots: [String], home: URL, systemRoot: URL
     ) -> [Manager] {
         let fm = FileManager.default
         let homePath = home.standardizedFileURL.path
@@ -157,11 +157,15 @@ extension Inventory {
 
             var evidence: String?
 
-            // A binary already picked up by the scan. Preferred, because it is
-            // the copy that would actually run.
-            if let tool = tools.first(where: { spec.binaries.contains($0.name) }) {
-                evidence = tool.path
-            }
+            // A binary already picked up by the scan. Where there are several
+            // -- a `mise` from Homebrew and a `mise` from its own installer is
+            // the ordinary case, not an exotic one -- the earliest search root
+            // wins, so the version reported for a manager belongs to a copy
+            // that can be named. That there is more than one is a separate
+            // finding; this only decides which one is quoted.
+            let copies = Inventory.inSearchOrder(
+                tools.filter { spec.binaries.contains($0.name) }, roots: roots)
+            if let tool = copies.first { evidence = tool.path }
             // Otherwise a directory. This is the only way nvm, sdkman, and a
             // conda that is not on PATH are visible at all.
             if evidence == nil {

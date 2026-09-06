@@ -68,11 +68,13 @@ extension Inventory {
         // identical, which is what makes a diff mean something.
         tools.sort { ($0.name, $0.path) < ($1.name, $1.path) }
 
+        let rootPaths = searched.map { abbreviate($0.path, home: homePath) }
         return Inventory(
             host: host(systemRoot: systemRoot),
-            roots: searched.map { abbreviate($0.path, home: homePath) },
+            roots: rootPaths,
             tools: tools,
-            managers: managers(tools: tools, home: home, systemRoot: systemRoot))
+            managers: managers(tools: tools, roots: rootPaths,
+                               home: home, systemRoot: systemRoot))
     }
 
     // MARK: - Where to look

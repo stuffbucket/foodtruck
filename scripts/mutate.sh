@@ -98,6 +98,7 @@ trap 'restore; rm -rf "$WORK"' EXIT INT TERM
 
 # Collect candidates first, so the run has a known size before it starts.
 : > "$WORK/candidates"
+: > "$WORK/excluded"
 for file in "${TARGETS[@]}"; do
   [ -f "$file" ] || { echo "no such file: $file" >&2; exit 66; }
   for op in "${OPERATORS[@]}"; do
@@ -109,6 +110,26 @@ for file in "${TARGETS[@]}"; do
       body="$(sed -n "${n}p" "$file")"
       case "$(echo "$body" | sed 's/^[[:space:]]*//')" in
         //*|/\**|\**) continue ;;
+      esac
+      # An `inout` argument's initial value is never read. Swift requires the
+      # variable to be initialised before `&x` can be passed, and the callee
+      # assigns it before anyone looks. So flipping that initialiser produces a
+      # mutant that no test can kill, because no input distinguishes the two
+      # programs -- a fact about the language, not a gap in the suite.
+      #
+      # Left in, it shows up as a survivor indistinguishable from a real one,
+      # and the honest reading of a survivor is "nothing was watching". Diluting
+      # that with mutants that cannot be watched is how a mutation report starts
+      # getting argued with instead of acted on.
+      case "$pattern" in
+        *false*)
+          name="$(printf '%s' "$body" | sed -n \
+            's/^[[:space:]]*var \([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*:.*=[[:space:]]*false.*$/\1/p')"
+          if [ -n "$name" ] && grep -q -- "&$name" "$file"; then
+            printf '%s:%s\t%s\n' "$file" "$n" "$body" >> "$WORK/excluded"
+            continue
+          fi
+          ;;
       esac
       printf '%s\t%s\t%s\t%s\n' "$file" "$n" "$pattern" "$replacement" >> "$WORK/candidates"
     done
@@ -129,6 +150,8 @@ fi
 RUNNING="$(wc -l < "$WORK/sample" | tr -d ' ')"
 
 echo "mutation testing: $RUNNING of $TOTAL candidates across ${#TARGETS[@]} files"
+EXCLUDED="$(wc -l < "$WORK/excluded" | tr -d ' ')"
+[ "$EXCLUDED" -eq 0 ] || echo "$EXCLUDED excluded as unkillable by construction (inout initialisers)"
 echo "if this is interrupted, \`git status\` will show the mutated file and"
 echo "\`git checkout -- <file>\` will undo it."
 echo ""

@@ -653,6 +653,45 @@ enum InventorySuite {
             s.require(copies.contains(where: \.shim) && copies.contains(where: { !$0.shim }),
                       "one of each")
         },
+        Case("With two managers shimming one tool, the finding names the one in front") { s in
+            // The case the inventory exists for, and the one no fixture had:
+            // mise and asdf both shimming `node` over a real Homebrew install.
+            // Naming a manager at all is a claim about which one is in play, so
+            // picking whichever sorted last would blame the wrong tool -- and
+            // the sentence reads just as confidently either way.
+            let box = Sandbox(); defer { box.destroy() }
+            let brewBin = box.root.appending(path: "opt/homebrew/bin")
+            let vendorBin = box.root.appending(path: "usr/local/bin")
+            try fm.createDirectory(
+                at: box.root.appending(path: "opt/homebrew/Library/Homebrew"),
+                withIntermediateDirectories: true)
+            let node = box.root.appending(path: "opt/homebrew/Cellar/node/26.5.0/bin/node")
+            try executable(node)
+            try fm.createDirectory(at: brewBin, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: brewBin.appending(path: "node"),
+                                      withDestinationURL: node)
+            try executable(vendorBin.appending(path: "node"))
+            // Both shim directories are found by the declared search order:
+            // mise's comes before asdf's, and neither is on any PATH here.
+            try executable(box.root.appending(path: ".local/share/mise/shims/node"))
+            try executable(box.root.appending(path: ".asdf/shims/node"))
+
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["env.inventory"]),
+                                  environment: sealed(box))
+            let service = await kitchen.inspect(.audit)
+            let findings = service.results.flatMap { $0.report.findings }
+            guard let shadow = findings.first(where: { $0.id == "inventory.shimShadowed:node" })
+            else {
+                s.require(false, "the shadowed node was not reported: \(findings.map(\.id))")
+                return
+            }
+            s.equal(shadow.args["manager"], "mise", "the wrong manager was blamed")
+            s.equal(shadow.args["shim"], "~/.local/share/mise/shims/node",
+                    "the quoted shim is not the one searched first")
+            s.equal(shadow.args["direct"], "~/opt/homebrew/bin/node",
+                    "the quoted install is not the one searched first")
+        },
         Case("A copy with no known version is not evidence of a conflict") { s in
             // "I could not tell" must not become "these differ". The shim has
             // no version by construction, so counting it as different would
@@ -661,6 +700,32 @@ enum InventorySuite {
             let inventory = scan(box, try fixture(box))
             s.require(inventory.conflictingVersions["node"] == nil,
                       "an unknown version was treated as a differing one")
+        },
+
+        Case("Which of several copies is quoted follows search order, not the alphabet") { s in
+            // Two copies of a manager is the ordinary case: Homebrew installs
+            // mise, mise's own installer puts one in ~/.local/bin, and both
+            // stay. Something has to decide which one the reported version
+            // belongs to. Sorting the tool list by path -- which is done for a
+            // stable snapshot, not for this -- decides it by ASCII, so `/opt`
+            // beats `~/.local` for no reason anyone could defend.
+            let box = Sandbox(); defer { box.destroy() }
+            let brewBin = box.root.appending(path: "opt/homebrew/bin")
+            let localBin = box.root.appending(path: ".local/bin")
+            try executable(brewBin.appending(path: "mise"))
+            try executable(localBin.appending(path: "mise"))
+
+            // In the sandbox home and system root are the same directory, so
+            // `/opt/homebrew` is written `~/opt/homebrew` like everything else.
+            func evidence(_ roots: [URL]) -> String? {
+                scan(box, roots).managers.first { $0.id == "mise" }?.evidence
+            }
+            s.equal(evidence([localBin, brewBin]), "~/.local/bin/mise",
+                    "the earliest searched copy should be the one quoted")
+            // The same two files, searched the other way round. If the answer
+            // does not move, the order is not being consulted at all.
+            s.equal(evidence([brewBin, localBin]), "~/opt/homebrew/bin/mise",
+                    "search order was ignored in favour of something else")
         },
 
         // MARK: the tools that decide what the other tools are
