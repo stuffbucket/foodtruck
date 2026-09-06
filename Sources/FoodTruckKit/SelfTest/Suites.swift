@@ -758,6 +758,130 @@ enum InventorySuite {
             s.require(service.drifted.isEmpty,
                       "still drifted: \(service.drifted.flatMap { $0.report.findings.map(\.id) })")
         },
+        Case("A version already asked for is not asked for again") { s in
+            // The cache is a safety feature, not an optimisation. Without it
+            // every audit re-launches every declared tool, which is how one
+            // mutation run turned into a few thousand process launches.
+            let box = Sandbox(); defer { box.destroy() }
+            let bin = box.root.appending(path: "bin")
+            let jq = bin.appending(path: "jq")
+            try executable(jq, printing: "jq-1.7.1")
+            let env = Exec.baseEnvironment(box.locations)
+
+            let first = await Inventory
+                .scan(home: box.root, locations: box.locations,
+                      systemRoot: box.root, roots: [bin])
+                .probingVersions(home: box.root, environment: env, systemRoot: box.root)
+            s.equal(first.tools.first?.version, "1.7.1", "asked once")
+
+            // Change what the program says while leaving its size and mtime
+            // alone, so the stamp is identical. If the answer still comes back
+            // 1.7.1, the program was not run a second time -- which is the
+            // only way to observe "did not run" from the outside.
+            let modified = try fm.attributesOfItem(atPath: jq.path)[.modificationDate]
+            try Data("#!/bin/sh\necho jq-9.9.9\n".utf8).write(to: jq)
+            try fm.setAttributes([.posixPermissions: 0o755,
+                                  .modificationDate: modified as Any],
+                                 ofItemAtPath: jq.path)
+            let second = await Inventory
+                .scan(home: box.root, locations: box.locations,
+                      systemRoot: box.root, roots: [bin])
+                .probingVersions(home: box.root, environment: env,
+                                 systemRoot: box.root, reusing: first)
+            s.equal(second.tools.first?.version, "1.7.1",
+                    "the program was run again instead of its answer being reused")
+        },
+        Case("A manager that is a program reports its own version") { s in
+            // Managers move faster than the things they install, so a stale one
+            // is its own problem. A shell function has no binary to ask and
+            // says so instead of going quiet.
+            let box = Sandbox(); defer { box.destroy() }
+            let bin = box.root.appending(path: "bin")
+            try executable(bin.appending(path: "mise"), printing: "2026.8.8")
+            try fm.createDirectory(at: box.root.appending(path: ".nvm"),
+                                   withIntermediateDirectories: true)
+            let probed = await Inventory
+                .scan(home: box.root, locations: box.locations,
+                      systemRoot: box.root, roots: [bin])
+                .probingVersions(home: box.root,
+                                 environment: Exec.baseEnvironment(box.locations),
+                                 systemRoot: box.root)
+            guard let mise = probed.managers.first(where: { $0.id == "mise" }),
+                  let nvm = probed.managers.first(where: { $0.id == "nvm" }) else {
+                s.require(false, "managers missing: \(probed.managers.map(\.id))"); return
+            }
+            s.require(!mise.shellFunction, "mise is a program, not a shell function")
+            s.equal(mise.version, "2026.8.8", "a manager's own version was not asked for")
+            s.require(nvm.shellFunction, "nvm is a shell function")
+            s.require(nvm.version == nil, "there was no binary to have asked")
+        },
+        Case("A path component that is not a version is not read as one") { s in
+            // The guard is "starts with a digit". Checking the wrong end of the
+            // string accepts `v2.1` as a version, which is a directory naming
+            // convention rather than something the tool ever said.
+            s.equal(Inventory.version(from: "/opt/homebrew/Cellar/foo/2.1/bin/foo"), "2.1",
+                    "a real version was rejected")
+            s.require(Inventory.version(from: "/opt/homebrew/Cellar/foo/v2.1/bin/foo") == nil,
+                      "a component that does not begin with a digit was read as a version")
+            s.require(Inventory.version(from: "/opt/homebrew/Cellar/foo/stable/bin/foo") == nil,
+                      "a word was read as a version")
+        },
+        Case("What the recipe reports matches what it found") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            // A program nobody manages, and one name installed twice at
+            // different versions -- neither directory has a Cellar above it.
+            try executable(box.root.appending(path: "usr/local/bin/handplaced"))
+            try executable(box.root.appending(path: "usr/local/bin/jq"), printing: "jq-2.0.0")
+            try executable(box.root.appending(path: "opt/homebrew/bin/jq"), printing: "jq-1.7.1")
+
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["core.locations", "env.inventory"]),
+                                  environment: sealed(box))
+            let service = await kitchen.inspect(.audit)
+            guard let report = service.results
+                .first(where: { $0.recipe == "env.inventory" })?.report else {
+                s.require(false, "the inventory did not report"); return
+            }
+            func finding(_ prefix: String) -> Finding? {
+                report.findings.first { $0.id.hasPrefix(prefix) }
+            }
+            func check(_ id: String) -> Check? { report.checks.first { $0.id == id } }
+
+            // `fixable` is what puts a Fix button on a finding. Whether to
+            // adopt a hand-installed program, or which of two copies to keep,
+            // is a decision FoodTruck has no business claiming it can make.
+            guard let unmanaged = finding("inventory.unmanaged:"),
+                  let conflict = finding("inventory.versionConflict:") else {
+                s.require(false, "expected findings missing: \(report.findings.map(\.id))")
+                return
+            }
+            s.require(!unmanaged.fixable, "converge cannot adopt a program for you")
+            s.require(unmanaged.remedy != nil, "a finding that cannot be fixed must say what to do")
+            s.require(!conflict.fixable, "converge cannot choose which copy you meant")
+
+            guard let traceable = check("traceable"), let unique = check("unique"),
+                  let managers = check("managers") else {
+                s.require(false, "expected checks missing"); return
+            }
+            s.require(!traceable.passed, "two unmanaged programs, and the check passed")
+            s.require(!traceable.vacuous, "programs were found, so it proved something")
+            s.require(!unique.passed, "jq is installed twice at different versions")
+            s.require(managers.vacuous, "no manager here, so that check proves nothing")
+        },
+        Case("Recording the machine actually writes a commit") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            // A machine with no usable git still records the snapshot; only the
+            // history is lost. Nothing to assert there, so step aside.
+            guard InventoryStore.executable() != nil else { return }
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["core.locations", "env.inventory"]),
+                                  environment: sealed(box))
+            _ = try await kitchen.converge()
+            let store = InventoryStore(root: box.locations.inventory)
+            let history = await store.history(
+                limit: 5, environment: Exec.baseEnvironment(box.locations))
+            s.require(!history.isEmpty, "converge reported success but committed nothing")
+        },
         Case("The git stub in /usr/bin is never what we run") { s in
             let box = Sandbox(); defer { box.destroy() }
             let stub = box.root.appending(path: "usr/bin/git")
