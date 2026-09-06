@@ -924,6 +924,46 @@ enum InventorySuite {
             s.equal(scan(box, roots), scan(box, roots), "the record differs from itself")
             s.equal(scan(box, roots).text, scan(box, roots).text, "the rendering drifts")
         },
+        Case("A commit git refuses is reported as failed, with git's reason") { s in
+            // `status == 0` guards the commit, and inverting it reports a
+            // refused commit as recorded -- the history silently stops growing
+            // while the tool says it is being kept. Nothing was watching that
+            // line, because every other test here commits successfully.
+            let box = Sandbox(); defer { box.destroy() }
+            let store = InventoryStore(root: box.locations.inventory)
+            let environment = Exec.baseEnvironment(box.locations)
+            let inventory = scan(box, [])
+            try store.write(inventory)
+            guard case .recorded = await store.commit(message: "first",
+                                                      environment: environment) else {
+                s.require(false, "the first commit did not go through"); return
+            }
+
+            // A hook that always refuses. git runs it for `commit` and nothing
+            // else, so `add` and `diff` still succeed and only the last step
+            // fails -- which is the branch under test rather than an earlier
+            // one standing in for it.
+            let hook = box.locations.inventory.appending(path: ".git/hooks/pre-commit")
+            try Data("#!/bin/sh\nprintf 'refused by policy\\n' >&2\nexit 1\n".utf8)
+                .write(to: hook)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+
+            // Something to record, or git answers "unchanged" before it gets
+            // as far as the hook.
+            var moved = inventory
+            moved.roots.append("/opt/somewhere/new")
+            try store.write(moved)
+
+            let outcome = await store.commit(message: "second", environment: environment)
+            guard case .failed(let detail) = outcome else {
+                s.require(false, "a refused commit was reported as \(outcome)"); return
+            }
+            // git puts a hook's own words on stderr. Quoting stdout instead
+            // would hand back an empty string, which reads as "it failed and
+            // nobody knows why".
+            s.require(detail.contains("refused by policy"),
+                      "git's reason did not survive: \(detail)")
+        },
         Case("A recorded inventory reads back as the same value") { s in
             let box = Sandbox(); defer { box.destroy() }
             let inventory = scan(box, try fixture(box))
