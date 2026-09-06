@@ -48,8 +48,12 @@ struct InventoryRecipe: BuiltinRecipe {
         // audits this recipe reads -- and probes -- the machine running the
         // tests, which turned a mutation run into a few thousand subprocess
         // launches against a real Mac.
+        // No boolean in this expression, on purpose. It used to test
+        // `isEmpty`, and this file is a mutation-testing target: flipping that
+        // one comparison would send a sealed test back at the real machine.
+        // A seal a mutant can pick is not a seal.
         let systemRoot = context.environment["FOODTRUCK_SCAN_ROOT"]
-            .flatMap { $0.isEmpty ? nil : URL(filePath: $0) } ?? URL(filePath: "/")
+            .map { URL(filePath: $0) } ?? URL(filePath: "/")
         return await Inventory
             .scan(home: home, locations: context.locations, systemRoot: systemRoot)
             .probingVersions(home: home, environment: context.environment,
