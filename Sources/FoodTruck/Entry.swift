@@ -56,14 +56,24 @@ enum CLI {
                       + "\(t(r.name))")
             }
             return 0
+        case "inventory":
+            return await inventory(locations, args)
         case "lint":
             return await Lint.run(locations, args)
         case "selftest":
             // Ships in the product on purpose: when something misbehaves on a
             // machine we cannot reach, this is the same signed binary proving
             // -- or failing to prove -- itself in situ.
-            let filter = args.first { !$0.hasPrefix("-") }
-            let report = await SelfTest.run(filter: filter)
+            // Order is randomised by default and the seed is printed, so a
+            // failure that only shows up in one order can be reproduced.
+            let seedIndex = args.firstIndex(of: "--seed").map { $0 + 1 }
+            let seed = seedIndex.flatMap { $0 < args.count ? UInt64(args[$0]) : nil }
+            // The seed's value is not a filter. `selftest --seed 12345` used to
+            // run every case whose name contained "12345", which is none.
+            let filter = args.enumerated()
+                .first { index, arg in !arg.hasPrefix("-") && index != seedIndex }?.element
+            let report = await SelfTest.run(
+                filter: filter, seed: seed, shuffle: !args.contains("--in-order"))
             return report.isClean ? 0 : 1
         case "help", "--help", "-h":
             print(usage)
@@ -87,11 +97,17 @@ enum CLI {
       plan  [--json]        Show what converge would do. Changes nothing.
       converge [--dry-run] [recipe...]
                             Make it so. Safe to run twice.
+      inventory [--all] [--duplicates] [--history]
+                            What is installed on this Mac and where it came
+                            from. --history needs `converge` to have run.
       recipes               List every recipe FoodTruck can run.
       where                 Show the four directories FoodTruck uses.
       lint pins             Re-derive every pinned digest from upstream.
       lint strings          Translation coverage for every shipped language.
-      selftest [filter]     Prove this binary works, here, now. TAP output.
+      selftest [filter] [--seed N] [--in-order]
+                            Prove this binary works, here, now. TAP output.
+                            Case order is random; the seed is printed so a
+                            failure can be replayed with --seed.
       version
 
     Everything FoodTruck writes lives under the XDG directories shown by
@@ -131,6 +147,141 @@ enum CLI {
         if json { return emitJSON(service) }
         Render.service(service, faults: faults)
         return service.isClean ? 0 : 10
+    }
+
+    /// The inventory, for reading rather than for judging.
+    ///
+    /// `audit` says whether the machine has changed; this says what is on it.
+    /// Splitting them keeps the audit summary short enough to read while still
+    /// giving the notices somewhere to point -- "some command names are
+    /// installed twice" is only useful if you can then ask which.
+    static func inventory(_ locations: Locations, _ args: [String]) async -> Int32 {
+        let environment = Exec.baseEnvironment(locations)
+        let store = InventoryStore(root: locations.inventory)
+
+        if args.contains("--history") {
+            let entries = await store.history(limit: 20, environment: environment)
+            if entries.isEmpty {
+                print(Render.paint("No history yet. `foodtruck converge` records the first one.", "90"))
+                return 0
+            }
+            for entry in entries { print(entry) }
+            return 0
+        }
+
+        // Probes as well as scans, so this shows the same versions the audit
+        // records rather than a weaker view of the same machine.
+        let home = URL(filePath: environment["HOME"] ?? NSHomeDirectory())
+        let current = await Inventory
+            .scan(home: home, locations: locations)
+            .probingVersions(home: home, environment: environment)
+
+        if args.contains("--duplicates") {
+            let groups = current.duplicated.sorted { $0.key < $1.key }
+            if groups.isEmpty {
+                print(Render.paint("No command name is installed more than once.", "90"))
+                return 0
+            }
+            for (name, copies) in groups {
+                print(Render.paint(name, "1"))
+                for copy in copies.sorted(by: { $0.path < $1.path }) {
+                    let origin = copy.origin.rawValue
+                        .padding(toLength: 10, withPad: " ", startingAt: 0)
+                    print("  \(Render.paint(origin, "90")) \(copy.path)")
+                }
+            }
+            return 0
+        }
+
+        if args.contains("--all") {
+            print(current.text, terminator: "")
+            return 0
+        }
+
+        print(Render.paint(current.host.describe, "1")
+              + "  \(current.host.arch)  kernel \(current.host.kernel)")
+        print(Render.paint(
+            "command line tools: " + (current.host.commandLineTools ?? "not installed"), "90"))
+        print("")
+
+        for (origin, count) in current.countsByOrigin.sorted(by: { $0.value > $1.value }) {
+            let name = origin.rawValue.padding(toLength: 12, withPad: " ", startingAt: 0)
+            let bar = String(repeating: " ", count: max(0, 6 - String(count).count))
+            print("  \(name)\(bar)\(count)")
+        }
+
+        if !current.managers.isEmpty {
+            print("")
+            print(Render.paint("Environment managers", "1"))
+            for manager in current.managers {
+                let id = manager.id.padding(toLength: 10, withPad: " ", startingAt: 0)
+                let version = manager.version
+                    ?? (manager.shellFunction ? "shell function" : "unknown")
+                print("  \(id) \(version.padding(toLength: 16, withPad: " ", startingAt: 0))"
+                      + Render.paint(manager.evidence, "90"))
+            }
+            let contested = current.contested
+            if !contested.isEmpty {
+                print("")
+                print(Render.paint("Contested — more than one of these wants the same runtime", "33"))
+                for (runtime, managers) in contested.sorted(by: { $0.key < $1.key }) {
+                    let name = runtime.padding(toLength: 10, withPad: " ", startingAt: 0)
+                    print("  ! \(name) \(managers.joined(separator: ", "))")
+                }
+            }
+        }
+
+        let conflicting = current.conflictingVersions
+        if !conflicting.isEmpty {
+            print("")
+            print(Render.paint("Installed twice at different versions", "33"))
+            for (name, copies) in conflicting.sorted(by: { $0.key < $1.key }) {
+                print("  ! \(Render.paint(name, "1"))")
+                for copy in copies {
+                    let version = (copy.version ?? "unknown")
+                        .padding(toLength: 14, withPad: " ", startingAt: 0)
+                    print("      \(version) \(Render.paint(copy.path, "90"))")
+                }
+            }
+        }
+
+        let shadowed = current.shadowedShims
+        if !shadowed.isEmpty {
+            print("")
+            print(Render.paint("Shimmed and installed — PATH order decides which runs", "33"))
+            for (name, copies) in shadowed.sorted(by: { $0.key < $1.key }) {
+                print("  ! \(Render.paint(name, "1"))")
+                for copy in copies {
+                    let label = copy.shim
+                        ? "\(copy.origin.rawValue) shim"
+                        : (copy.version ?? "unknown")
+                    print("      \(label.padding(toLength: 14, withPad: " ", startingAt: 0))"
+                          + Render.paint(copy.path, "90"))
+                }
+            }
+        }
+
+        let unmanaged = current.unmanaged
+        if !unmanaged.isEmpty {
+            print("")
+            print(Render.paint("Unmanaged — nothing on this Mac accounts for these", "33"))
+            for tool in unmanaged {
+                let name = tool.name.padding(toLength: 20, withPad: " ", startingAt: 0)
+                print("  · \(name) \(Render.paint(tool.path, "90"))")
+            }
+        }
+
+        // Says its own scope, for the same reason the audit summary does: a
+        // list of what was found means nothing without where it was looked for.
+        print("")
+        print(Render.paint(
+            "\(current.tools.count) programs across \(current.roots.count) directories. "
+            + "Anywhere not listed by `--all` was not searched.", "90"))
+        if store.load() == nil {
+            print(Render.paint(
+                "Not recorded yet — `foodtruck converge` starts the history.", "90"))
+        }
+        return 0
     }
 
     static func converge(_ locations: Locations, dryRun: Bool, only: Set<String>) async -> Int32 {

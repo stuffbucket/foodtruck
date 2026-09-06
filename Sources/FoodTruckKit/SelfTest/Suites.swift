@@ -37,6 +37,23 @@ private func builtins(_ ids: Set<String>? = nil) -> [Recipe] {
     BuiltinEngine().descriptors.filter { ids == nil || ids!.contains($0.id) }
 }
 
+/// An environment that points every recipe at the sandbox and nowhere else.
+///
+/// Every `Kitchen` built in these tests uses it. The inventory recipe reads the
+/// machine and runs a declared list of programs on it, and without this seal a
+/// test that merely audits would scan the real `/usr/bin` and launch a couple
+/// of dozen subprocesses against the developer's Mac -- multiplied by every
+/// case that audits, and again by every mutant in a mutation run. That is not
+/// a hypothetical: it cost one machine a hard restart.
+///
+/// A test must be able to run ten thousand times without the host noticing.
+private func sealed(_ box: Sandbox) -> [String: String] {
+    var environment = Exec.baseEnvironment(box.locations)
+    environment["HOME"] = box.root.path
+    environment["FOODTRUCK_SCAN_ROOT"] = box.root.path
+    return environment
+}
+
 enum LocationSuite {
     static let suite = Suite("locations", [
         Case("FOODTRUCK_ROOT relocates every directory at once") { s in
@@ -102,13 +119,23 @@ enum GraphSuite {
                 s.equal(missing, "ghost", "named the missing dependency")
             }
         },
-        Case("Every builtin is housekeeping, and no recipe on disk is") { s in
-            // The rule that keeps FoodTruck's plumbing off the user's list. If a
-            // builtin ever becomes something a person should care about, it
-            // needs a real name and a real reason, not a default.
-            for recipe in builtins() {
+        Case("A builtin is housekeeping unless it is named here on purpose") { s in
+            // The rule that keeps FoodTruck's plumbing off the user's list. A
+            // builtin may be something a person should care about, but it has
+            // to say so here, deliberately, and give the reason -- which is
+            // what stops the next one drifting into visibility by default.
+            //
+            // `env.inventory` is the first: a builtin because knowing what is
+            // installed cannot depend on something being installed, and the
+            // user's business because it is entirely about their machine.
+            let visibleOnPurpose: Set<String> = ["env.inventory"]
+            for recipe in builtins() where !visibleOnPurpose.contains(recipe.id) {
                 s.equal(recipe.scope, .housekeeping,
                         "\(recipe.id) would show up in the user's list")
+            }
+            for id in visibleOnPurpose {
+                s.equal(builtins([id]).first?.scope, RecipeScope.environment,
+                        "\(id) is listed as deliberately visible but is not")
             }
         },
         Case("A recipe.json with no scope loads as the user's business") { s in
@@ -201,7 +228,7 @@ enum EvidenceSuite {
             // A green result that cannot show its working is indistinguishable
             // from one that checked nothing, so converging must leave evidence.
             let box = Sandbox(); defer { box.destroy() }
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]))
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]), environment: sealed(box))
             _ = try await kitchen.converge(only: ["core.locations"])
             let service = await kitchen.inspect(.audit)
             let checks = service.results.flatMap(\.report.checks)
@@ -221,7 +248,7 @@ enum ReadOnlySuite {
     static let suite = Suite("read-only", [
         Case("audit changes nothing, on a machine where everything is missing") { s in
             let box = Sandbox(); defer { box.destroy() }
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins())
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(), environment: sealed(box))
             let before = box.fingerprint()
             let service = await kitchen.inspect(.audit)
             s.equal(box.fingerprint(), before, "audit wrote to the sandbox")
@@ -234,7 +261,7 @@ enum ReadOnlySuite {
         },
         Case("A dry run reports the drift and repairs none of it") { s in
             let box = Sandbox(); defer { box.destroy() }
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]))
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]), environment: sealed(box))
             let before = box.fingerprint()
             let service = try await kitchen.converge(only: ["core.locations"], dryRun: true)
             s.equal(box.fingerprint(), before, "a dry run wrote to disk")
@@ -247,7 +274,7 @@ enum ConvergeSuite {
     static let suite = Suite("converge", [
         Case("Running it twice is running it once") { s in
             let box = Sandbox(); defer { box.destroy() }
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]))
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]), environment: sealed(box))
             let first = try await kitchen.converge(only: ["core.locations"])
             s.require(first.isClean, "first converge should settle")
             let settled = box.fingerprint()
@@ -258,7 +285,7 @@ enum ConvergeSuite {
         Case("It repairs damage done behind its back") { s in
             // The ansible property: an unknown starting state converges anyway.
             let box = Sandbox(); defer { box.destroy() }
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]))
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["core.locations"]), environment: sealed(box))
             _ = try await kitchen.converge(only: ["core.locations"])
             try FileManager.default.removeItem(at: box.locations.state)
             s.require(!(await kitchen.inspect(.audit).isClean), "deletion should show as drift")
@@ -273,7 +300,7 @@ enum ConvergeSuite {
             let systemRecipe = Recipe(id: "fake.system", name: "n", summary: "n",
                                       engine: "builtin", blast: .system)
             let kitchen = Kitchen(locations: box.locations, recipes: [systemRecipe],
-                                  blastCeiling: .contained)
+                                  blastCeiling: .contained, environment: sealed(box))
             let service = try await kitchen.converge()
             s.equal(service.blocked.count, 1, "the system-blast recipe was refused")
             s.require(service.failed.isEmpty, "a refusal is not a failure")
@@ -285,14 +312,14 @@ enum ConvergeSuite {
             let systemRecipe = Recipe(id: "fake.system", name: "n", summary: "n",
                                       engine: "builtin", blast: .privileged)
             let kitchen = Kitchen(locations: box.locations, recipes: [systemRecipe],
-                                  blastCeiling: .contained)
+                                  blastCeiling: .contained, environment: sealed(box))
             let service = await kitchen.inspect(.audit)
             s.equal(service.blocked.count, 0, "audit is never gated by blast radius")
         },
         Case("A recipe whose dependency is unmet waits instead of failing") { s in
             let box = Sandbox(); defer { box.destroy() }
             // core.toolbox.task requires core.locations, which is excluded here.
-            let kitchen = Kitchen(locations: box.locations, recipes: builtins())
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(), environment: sealed(box))
             let service = try await kitchen.converge(only: ["core.toolbox.task"], dryRun: true)
             s.require(service.failed.isEmpty, "an unmet dependency is not a failure")
         },
@@ -372,6 +399,371 @@ enum IntlSuite {
             }
             s.require(L10n.shared.misses.isEmpty,
                       "untranslated keys: \(L10n.shared.misses.sorted().joined(separator: ", "))")
+        },
+    ])
+}
+
+enum InventorySuite {
+    private static let fm = FileManager.default
+
+    private static func executable(_ url: URL, printing banner: String = "") throws {
+        let body = banner.isEmpty ? "exit 9" : "echo \(banner)"
+        try fm.createDirectory(at: url.deletingLastPathComponent(),
+                               withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    /// A fake machine, so every claim below is tested against a shape rather
+    /// than against whatever the machine running the tests happens to have.
+    /// Nothing here is installed anywhere; these are five-line shell scripts.
+    ///
+    /// The layout reproduces the specific things that have been got wrong:
+    /// Homebrew's prefix being its own checkout, a Cellar path that disagrees
+    /// with the tool it holds, and a shim whose link leads through a second
+    /// symlink into a completely unrelated Cellar.
+    private static func fixture(_ box: Sandbox) throws -> [URL] {
+        let brewBin = box.root.appending(path: "opt/homebrew/bin")
+        let cellar = box.root.appending(path: "opt/homebrew/Cellar")
+        let shims = box.root.appending(path: "mise/shims")
+        let vendorBin = box.root.appending(path: "usr/local/bin")
+
+        // The two markers that make a directory a Homebrew installation rather
+        // than a directory that happens to be named after one.
+        try fm.createDirectory(at: box.root.appending(path: "opt/homebrew/Library/Homebrew"),
+                               withIntermediateDirectories: true)
+        for dir in [brewBin, shims, vendorBin] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        func link(_ from: URL, _ to: URL) throws {
+            try fm.createSymbolicLink(at: from, withDestinationURL: to)
+        }
+
+        // brew itself: a plain file inside its own prefix, as on Apple silicon.
+        try executable(brewBin.appending(path: "brew"))
+
+        // An ordinary formula: bin symlink into a Cellar that tells the truth.
+        let gh = cellar.appending(path: "gh/2.76.0/bin/gh")
+        try executable(gh)
+        try link(brewBin.appending(path: "gh"), gh)
+
+        // A Cellar path that disagrees with the tool inside it.
+        let jq = cellar.appending(path: "jq/9.9.9/bin/jq")
+        try executable(jq, printing: "jq-1.7.1")
+        try link(brewBin.appending(path: "jq"), jq)
+
+        // A real node, so it can be caught shadowing the shim below.
+        let node = cellar.appending(path: "node/26.5.0/bin/node")
+        try executable(node)
+        try link(brewBin.appending(path: "node"), node)
+
+        // mise, installed by Homebrew, so it is itself a Cellar symlink...
+        let mise = cellar.appending(path: "mise/2026.8.8/bin/mise")
+        try executable(mise)
+        try link(brewBin.appending(path: "mise"), mise)
+        // ...and a shim pointing at it. Resolving this chain all the way lands
+        // in `Cellar/mise/2026.8.8`, which is how `node` once acquired both
+        // Homebrew as its installer and mise's version as its version.
+        try link(shims.appending(path: "node"), brewBin.appending(path: "mise"))
+
+        // A bin directory with no Cellar above it: nobody's.
+        try executable(vendorBin.appending(path: "handplaced"))
+
+        return [brewBin, shims, vendorBin]
+    }
+
+    private static func scan(_ box: Sandbox, _ roots: [URL] = []) -> Inventory {
+        Inventory.scan(home: box.root, locations: box.locations,
+                       systemRoot: box.root, roots: roots)
+    }
+
+    private static func tool(_ inventory: Inventory, _ name: String) -> Installed? {
+        inventory.tools.first { $0.name == name }
+    }
+
+    static let suite = Suite("inventory", [
+
+        // MARK: attribution
+
+        Case("A Homebrew prefix is recognised by what it contains, not what it is called") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            guard let gh = tool(inventory, "gh"), let brew = tool(inventory, "brew"),
+                  let loose = tool(inventory, "handplaced") else {
+                s.require(false, "fixture missing: \(inventory.tools.map(\.name))"); return
+            }
+            s.equal(gh.origin, Origin.homebrew, "the Cellar symlink names its installer")
+            // On Apple silicon the prefix *is* the Homebrew checkout, so `brew`
+            // is a plain file in `<prefix>/bin`. Reporting the tool that manages
+            // everything as managed by nothing costs a list its credibility.
+            s.equal(brew.origin, Origin.homebrew, "brew lives inside its own prefix")
+            s.equal(loose.origin, Origin.unmanaged,
+                    "a bin directory that is not a Homebrew prefix owns nothing")
+            s.require(loose.version == nil, "a version was invented for it")
+        },
+        Case("Following a shim's link describes the manager, never the tool") { s in
+            // Regression, and the subtlest thing here. The shim points at mise,
+            // mise is itself a Cellar symlink, so resolving the whole chain
+            // reports `node` as installed by Homebrew at mise's version. Both
+            // wrong, and wrong in the confident way.
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            guard let shim = inventory.tools.first(where: { $0.name == "node" && $0.shim })
+            else { s.require(false, "fixture missing the node shim"); return }
+            s.equal(shim.origin, Origin.mise, "the shim was credited to mise's own installer")
+            s.require(shim.version == nil, "mise's version was attached to node")
+        },
+        Case("The scan alone runs nothing, and says so about what it reports") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            s.equal(inventory.tools.count, 7, "all seven found")
+            s.require(inventory.tools.allSatisfy { $0.versionSource != .probed },
+                      "the scan claimed a probed version without running anything")
+            s.require(inventory.unmanaged.allSatisfy { $0.version == nil },
+                      "a hand-installed program has no layout to read a version out of")
+        },
+
+        // MARK: versions
+
+        Case("A tool is believed over the directory it was unpacked into") { s in
+            // Install layouts are a convention. Things get moved, renamed and
+            // unpacked in odd places, and only the tool actually knows.
+            let box = Sandbox(); defer { box.destroy() }
+            let scanned = scan(box, try fixture(box))
+            guard let inferred = tool(scanned, "jq") else {
+                s.require(false, "fixture missing jq"); return
+            }
+            s.equal(inferred.version, "9.9.9", "the path claims 9.9.9")
+            s.equal(inferred.versionSource, VersionSource.inferred, "and only claims it")
+
+            let probed = await scanned.probingVersions(
+                home: box.root, environment: Exec.baseEnvironment(box.locations))
+            guard let jq = tool(probed, "jq") else {
+                s.require(false, "jq lost in probing"); return
+            }
+            s.equal(jq.version, "1.7.1", "the tool's own answer wins")
+            s.equal(jq.versionSource, VersionSource.probed, "recorded as its own answer")
+        },
+        Case("A shim is never run, because running one installs a toolchain") { s in
+            // The probe once ran `mise/shims/node --version`; mise answered by
+            // downloading and installing Node 22 into the sandbox, from a verb
+            // that promises to change nothing.
+            let box = Sandbox(); defer { box.destroy() }
+            let scanned = scan(box, try fixture(box))
+            guard let shim = scanned.tools.first(where: { $0.name == "node" && $0.shim })
+            else { s.require(false, "fixture missing the node shim"); return }
+            s.require(scanned.probeTarget(for: shim, home: box.root.path,
+                                          systemRoot: box.root,
+                                          developerDirectory: nil) == nil,
+                      "the shim would have been run")
+        },
+        Case("Only declared tools are run, wherever they happen to live") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let probed = await scan(box, try fixture(box)).probingVersions(
+                home: box.root, environment: Exec.baseEnvironment(box.locations))
+            let asked = Set(probed.tools.filter { $0.versionSource == .probed }.map(\.name))
+            // brew, mise and node are on the list and were found; the shim is
+            // excluded above, and `handplaced` is nobody's business.
+            s.require(!asked.contains("handplaced"), "an undeclared program was run")
+            s.require(asked.contains("jq"), "a declared program was skipped")
+        },
+        Case("A developer-tool stub is resolved, never run, and skipped if empty") { s in
+            // Apple's stubs are all hard links to one file -- on macOS 26.6,
+            // `git`, `clang`, `swift`, `make` and `cmpdylib` share an inode
+            // with 78 links, while `ruby` and `zsh` have one each. So the
+            // family is identified by shape, with no list of names to maintain.
+            //
+            // The stub is a forwarder, and running one whose tool is not
+            // installed is what puts up "requires the command line developer
+            // tools". That dialog is not a question a user can answer, so it
+            // must never be asked: resolve the stub to the real tool, and if
+            // there is no real tool, run nothing.
+            let box = Sandbox(); defer { box.destroy() }
+            let usrbin = box.root.appending(path: "usr/bin")
+            let developer = box.root.appending(path: "Developer")
+            try fm.createDirectory(at: developer.appending(path: "usr/bin"),
+                                   withIntermediateDirectories: true)
+            try executable(usrbin.appending(path: "git"))
+            // cmpdylib as a hard link to git: one file, two names, exactly the
+            // shape of the real thing.
+            try fm.linkItem(at: usrbin.appending(path: "git"),
+                            to: usrbin.appending(path: "cmpdylib"))
+            // The developer directory backs git, and nothing else.
+            try executable(developer.appending(path: "usr/bin/git"))
+
+            let inventory = Inventory(
+                host: Inventory.host(systemRoot: box.root), roots: [],
+                tools: [Installed(name: "git", path: usrbin.appending(path: "git").path,
+                                  origin: .apple),
+                        Installed(name: "cmpdylib",
+                                  path: usrbin.appending(path: "cmpdylib").path,
+                                  origin: .apple),
+                        Installed(name: "jq", path: "~/.local/bin/jq", origin: .unmanaged)])
+            func target(_ name: String) -> String? {
+                guard let tool = inventory.tools.first(where: { $0.name == name })
+                else { return nil }
+                return inventory.probeTarget(for: tool, home: box.root.path,
+                                             systemRoot: box.root,
+                                             developerDirectory: developer.path)
+            }
+            s.equal(target("git"), developer.appending(path: "usr/bin/git").path,
+                    "the stub should resolve to the tool behind it, not run itself")
+            s.require(target("cmpdylib") == nil,
+                      "a stub with nothing behind it was going to be run")
+            s.equal(target("jq"), box.root.path + "/.local/bin/jq",
+                    "an ordinary program is still run where it is")
+        },
+        Case("A candidate set larger than the declared list runs nothing at all") { s in
+            // The ceiling, and the reason it exists. Inverting one `return` in
+            // the gate turned "run twenty-odd declared tools" into "run every
+            // executable on this machine", and it reached a real Mac. A bound
+            // derived from the size of the declared list cannot be undone by
+            // that mistake, because it does not consult the gate's reasoning.
+            let box = Sandbox(); defer { box.destroy() }
+            let bin = box.root.appending(path: "bin")
+            var tools: [Installed] = []
+            for index in 0...Inventory.probeCeiling {
+                let url = bin.appending(path: "tool\(index)")
+                try executable(url, printing: "1.0.0")
+                // Every one of them declared, so only the ceiling can stop it.
+                tools.append(Installed(name: "jq", path: url.path, origin: .unmanaged))
+            }
+            let flooded = Inventory(host: Inventory.host(systemRoot: box.root),
+                                    roots: [], tools: tools)
+            let result = await flooded.probingVersions(
+                home: box.root, environment: Exec.baseEnvironment(box.locations),
+                systemRoot: box.root)
+            s.require(result.probeRefused, "the flood was not refused")
+            s.require(result.tools.allSatisfy { $0.versionSource != .probed },
+                      "something was run despite the refusal")
+        },
+
+        // MARK: more than one copy
+
+        Case("A shim beside a real install is named, not folded into a count") { s in
+            // The most consequential thing here, and invisible to every other
+            // check: both are on PATH, the shim has no version to compare, and
+            // two lines in a shell startup file decide which one you get.
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            guard let copies = inventory.shadowedShims["node"] else {
+                s.require(false, "the shadowed node was not reported"); return
+            }
+            s.equal(copies.count, 2, "both copies listed")
+            s.require(copies.contains(where: \.shim) && copies.contains(where: { !$0.shim }),
+                      "one of each")
+        },
+        Case("A copy with no known version is not evidence of a conflict") { s in
+            // "I could not tell" must not become "these differ". The shim has
+            // no version by construction, so counting it as different would
+            // report a conflict on every managed tool on the machine.
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            s.require(inventory.conflictingVersions["node"] == nil,
+                      "an unknown version was treated as a differing one")
+        },
+
+        // MARK: the tools that decide what the other tools are
+
+        Case("A manager that is not a program at all is still found") { s in
+            // nvm is a shell function sourced from ~/.nvm/nvm.sh. Nothing on
+            // PATH names it, so a scan of executables concludes it is absent
+            // while it is deciding which node you get.
+            let box = Sandbox(); defer { box.destroy() }
+            try fm.createDirectory(at: box.root.appending(path: ".nvm"),
+                                   withIntermediateDirectories: true)
+            guard let nvm = scan(box).managers.first(where: { $0.id == "nvm" }) else {
+                s.require(false, "a directory-only manager was missed"); return
+            }
+            s.require(nvm.shellFunction, "nvm is not an executable")
+            s.require(nvm.version == nil, "there is no binary to have asked")
+            s.equal(nvm.manages, ["node"], "and it is a node manager")
+        },
+        Case("Two managers wanting one runtime is known before either is run") { s in
+            // Declared rather than discovered: what a manager is capable of
+            // managing is a fact about the tool. So the overlap is knowable
+            // without interrogating anything, which is the only way to see it
+            // before PATH order has already silently decided.
+            let box = Sandbox(); defer { box.destroy() }
+            for dir in [".pyenv", "miniconda3"] {
+                try fm.createDirectory(at: box.root.appending(path: dir),
+                                       withIntermediateDirectories: true)
+            }
+            let contested = scan(box).contested
+            s.equal(contested["python"] ?? [], ["conda", "pyenv"], "both named")
+            s.require(contested["ruby"] == nil, "a runtime neither manages is not contested")
+        },
+        Case("A tool that only sometimes manages things must show that it does") { s in
+            // pnpm can install Node with `pnpm env use`, and almost nobody
+            // does. Counting every machine with pnpm as having a second node
+            // manager announces a conflict that is not happening.
+            let box = Sandbox(); defer { box.destroy() }
+            let bin = box.root.appending(path: "opt/homebrew/bin")
+            try executable(bin.appending(path: "pnpm"))
+            s.require(!scan(box, [bin]).managers.contains { $0.id == "pnpm" },
+                      "pnpm counted as a node manager on presence alone")
+
+            try fm.createDirectory(at: box.root.appending(path: "Library/pnpm/nodejs"),
+                                   withIntermediateDirectories: true)
+            s.require(scan(box, [bin]).managers.contains { $0.id == "pnpm" },
+                      "pnpm is managing node here and was not counted")
+        },
+
+        // MARK: the record
+
+        Case("Two scans of an unchanged machine produce identical bytes") { s in
+            // Without this the history is a heartbeat: a commit on every run,
+            // none of which mean anything. It is also why the record carries no
+            // timestamp of its own.
+            let box = Sandbox(); defer { box.destroy() }
+            let roots = try fixture(box)
+            s.equal(scan(box, roots), scan(box, roots), "the record differs from itself")
+            s.equal(scan(box, roots).text, scan(box, roots).text, "the rendering drifts")
+        },
+        Case("A recorded inventory reads back as the same value") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let inventory = scan(box, try fixture(box))
+            let store = InventoryStore(root: box.locations.inventory)
+            try store.write(inventory)
+            guard let reloaded = store.load() else {
+                s.require(false, "nothing read back"); return
+            }
+            s.equal(reloaded, inventory, "round trip lost something")
+        },
+        Case("A snapshot written before a field existed still loads") { s in
+            // A history whose older entries cannot be read is not a history,
+            // and re-recording from scratch erases the comparison it is kept for.
+            let json = #"{"schema":"foodtruck.inventory/1","host":{"product":"macOS","version":"26.6","build":"25G83","arch":"arm64","kernel":"25.6.0"},"roots":[],"tools":[]}"#
+            let old = try JSONDecoder().decode(Inventory.self, from: Data(json.utf8))
+            s.require(old.managers.isEmpty, "absent managers decode as none, not as a failure")
+            s.equal(old.host.version, "26.6", "the rest survived")
+        },
+        Case("Auditing writes nothing, not even its own directory") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let kitchen = Kitchen(locations: box.locations, recipes: builtins(["env.inventory"]), environment: sealed(box))
+            let before = box.fingerprint()
+            _ = await kitchen.inspect(.audit)
+            s.equal(box.fingerprint(), before, "audit wrote to the sandbox")
+            s.require(!FileManager.default.fileExists(atPath: box.locations.inventory.path),
+                      "audit created the inventory directory")
+        },
+        Case("Once the machine is recorded there is nothing left to fix") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["core.locations", "env.inventory"]), environment: sealed(box))
+            _ = try await kitchen.converge()
+            let service = await kitchen.inspect(.audit)
+            // Notices -- unmanaged programs, contested runtimes -- are expected
+            // on any real machine and are deliberately not drift.
+            s.require(service.drifted.isEmpty,
+                      "still drifted: \(service.drifted.flatMap { $0.report.findings.map(\.id) })")
+        },
+        Case("The git stub in /usr/bin is never what we run") { s in
+            let box = Sandbox(); defer { box.destroy() }
+            let stub = box.root.appending(path: "usr/bin/git")
+            try executable(stub)
+            s.require(InventoryStore.executable(systemRoot: box.root) == nil,
+                      "the stub was mistaken for a usable git")
         },
     ])
 }

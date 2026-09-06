@@ -96,6 +96,9 @@ public struct Locations: Sendable, Equatable {
     /// Tools FoodTruck has unlocked for itself. Never on the user's PATH
     /// unless they ask -- this directory is FoodTruck's, not the system's.
     public var toolbox: URL { data.appending(path: "toolbox/bin") }
+    /// Snapshots of what is installed on this machine, in a git repository so
+    /// that "what changed since last week" is a question with an answer.
+    public var inventory: URL { data.appending(path: "inventory") }
     public var runs: URL { state.appending(path: "runs") }
     public var downloads: URL { cache.appending(path: "downloads") }
 

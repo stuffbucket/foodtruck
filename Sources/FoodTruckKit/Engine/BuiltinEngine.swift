@@ -28,7 +28,9 @@ public struct BuiltinEngine: RecipeEngine {
         self.recipes = Dictionary(uniqueKeysWithValues: recipes.map { ($0.descriptor.id, $0) })
     }
 
-    public static var standard: [BuiltinRecipe] { [WorkspaceRecipe(), CookbookRecipe(), ToolboxRecipe()] }
+    public static var standard: [BuiltinRecipe] {
+        [WorkspaceRecipe(), CookbookRecipe(), ToolboxRecipe(), InventoryRecipe()]
+    }
     public var descriptors: [Recipe] { recipes.values.map(\.descriptor).sorted { $0.id < $1.id } }
 
     public func availability(_ context: RunContext) async -> EngineAvailability { .ready }
