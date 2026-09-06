@@ -37,7 +37,13 @@ snapshot() (
     ls "$REAL_HOME/Library/Preferences"
     ls /opt/homebrew/bin /usr/local/bin
     ls /Library/LaunchDaemons /Library/LaunchAgents /etc/paths.d /etc/manpaths.d
-    launchctl list | awk '{print $3}'
+    # Spotlight spawns a transient launchd job per indexing task, with a
+    # generated label, and they appear and vanish on their own: measured, this
+    # snapshot differs from itself across a bare `sleep 6` about half the time.
+    # Leaving them in makes the tripwire fail at random, and a guard that cries
+    # wolf is worse than no guard because people learn to re-run it. Anything a
+    # recipe could install carries a real label, never a generated one.
+    launchctl list | awk '{print $3}' | grep -v '^com\.apple\.mdworker\.'
     security list-keychains
     ls /Volumes
     shasum "$REAL_HOME"/.zshrc "$REAL_HOME"/.zprofile "$REAL_HOME"/.zshenv \
