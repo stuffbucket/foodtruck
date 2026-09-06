@@ -769,6 +769,150 @@ enum InventorySuite {
                       "pnpm is managing node here and was not counted")
         },
 
+        Case("One copy of each is not a duplicate, a conflict, or a shadow") { s in
+            // The quiet direction, and the one nothing was checking. Every
+            // "more than one" test here proves the report fires; none proved it
+            // stays silent. Relaxing `count > 1` to `count >= 1` turns each of
+            // these three into a warning about every tool on the machine --
+            // 1,357 of them on a real Mac -- and the suite had nothing to say.
+            let box = Sandbox(); defer { box.destroy() }
+            let bin = box.root.appending(path: "opt/homebrew/bin")
+            for name in ["gh", "jq", "node", "mise"] {
+                try executable(bin.appending(path: name))
+            }
+            let inventory = scan(box, [bin])
+            s.equal(inventory.tools.count, 4, "fixture")
+            s.require(inventory.duplicated.isEmpty,
+                      "a single copy was reported as installed more than once")
+            s.require(inventory.conflictingVersions.isEmpty,
+                      "one copy was reported as disagreeing with itself")
+            s.require(inventory.shadowedShims.isEmpty,
+                      "a tool with no shim was reported as shadowed")
+            // Without a manager the contested check proves nothing either way,
+            // so mise is present and is the only one.
+            s.equal(inventory.managers.map(\.id), ["mise"], "mise should be the one manager")
+            s.require(inventory.contested.isEmpty,
+                      "a runtime with one manager was reported as contested")
+        },
+        Case("On a machine with nothing wrong, every check says so") { s in
+            // A check reports whether something held. Invert one and FoodTruck
+            // says "verified" about the thing it just found wrong, which is
+            // worse than not checking -- and every `passed:` in the recipe
+            // could be inverted without a test objecting.
+            let box = Sandbox(); defer { box.destroy() }
+            let brew = box.root.appending(path: "opt/homebrew")
+            try fm.createDirectory(at: brew.appending(path: "Library/Homebrew"),
+                                   withIntermediateDirectories: true)
+            try fm.createDirectory(at: brew.appending(path: "Cellar"),
+                                   withIntermediateDirectories: true)
+            // Inside a Homebrew prefix, so nothing is unaccounted for; one
+            // manager, so the contested check has something to be about.
+            for name in ["gh", "jq", "mise"] {
+                try executable(brew.appending(path: "bin/\(name)"), printing: "1.0.0")
+            }
+            // A shim with nothing beside it to shadow. Without one the shim
+            // check passes because it was asked nothing, which is the vacuous
+            // pass this project exists to object to -- so a clean machine has
+            // to be one where all six checks actually had something to prove.
+            try executable(box.root.appending(path: ".local/share/mise/shims/python"))
+
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["core.locations", "env.inventory"]),
+                                  environment: sealed(box))
+            _ = try await kitchen.converge()
+            let service = await kitchen.inspect(.audit)
+            guard let result = service.results.first(where: { $0.recipe == "env.inventory" })
+            else { s.require(false, "the inventory recipe did not report"); return }
+
+            s.require(!result.report.checks.isEmpty, "there were no checks to pass")
+            for check in result.report.checks {
+                s.require(check.passed, "check \(check.id) failed on a clean machine")
+                s.require(!check.vacuous,
+                          "check \(check.id) passed without proving anything")
+            }
+        },
+        Case("On a machine that has never been recorded, the record check fails") { s in
+            // The other half, and the one that makes the half above mean
+            // something: `passed: false` in the unrecorded branch can be
+            // flipped to true, and a suite that only ever audits clean
+            // machines would never reach it.
+            let box = Sandbox(); defer { box.destroy() }
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["env.inventory"]),
+                                  environment: sealed(box))
+            let service = await kitchen.inspect(.audit)
+            let checks = service.results.flatMap { $0.report.checks }
+            guard let recorded = checks.first(where: { $0.id == "recorded" }) else {
+                s.require(false, "no record check: \(checks.map(\.id))"); return
+            }
+            s.require(!recorded.passed,
+                      "a machine with no snapshot was reported as recorded")
+        },
+        Case("Nothing the inventory finds is something FoodTruck offers to fix") { s in
+            // `fixable` is what puts a Fix button in front of a person. Every
+            // finding here is a decision only they can make -- which of two
+            // managers owns python, whether a hand-installed binary should be
+            // adopted or deleted -- and each one could be flipped to true
+            // without a test noticing.
+            let box = Sandbox(); defer { box.destroy() }
+            let brew = box.root.appending(path: "opt/homebrew")
+            let brewBin = brew.appending(path: "bin")
+            let vendorBin = box.root.appending(path: "usr/local/bin")
+            try fm.createDirectory(at: brew.appending(path: "Library/Homebrew"),
+                                   withIntermediateDirectories: true)
+            try fm.createDirectory(at: brew.appending(path: "Cellar"),
+                                   withIntermediateDirectories: true)
+            // Two copies that disagree, and two that agree: the first is named
+            // individually, the second is summarised, and they are separate
+            // findings.
+            try executable(brewBin.appending(path: "jq"), printing: "jq-1.7.1")
+            try executable(vendorBin.appending(path: "jq"), printing: "jq-1.6")
+            try executable(brewBin.appending(path: "gh"), printing: "gh version 2.76.0")
+            try executable(vendorBin.appending(path: "gh"), printing: "gh version 2.76.0")
+            // A shim over a real install.
+            try executable(brewBin.appending(path: "node"))
+            try executable(box.root.appending(path: ".local/share/mise/shims/node"))
+            // Two managers that both install python.
+            try executable(brewBin.appending(path: "mise"))
+            try fm.createDirectory(at: box.root.appending(path: ".pyenv"),
+                                   withIntermediateDirectories: true)
+            // And something nobody installed on purpose.
+            try executable(vendorBin.appending(path: "handplaced"))
+
+            let kitchen = Kitchen(locations: box.locations,
+                                  recipes: builtins(["env.inventory"]),
+                                  environment: sealed(box))
+            let service = await kitchen.inspect(.audit)
+            guard let report = service.results.first(where: { $0.recipe == "env.inventory" })?.report
+            else { s.require(false, "the inventory recipe did not report"); return }
+
+            // Asserted first, because "none of them were fixable" is true of no
+            // findings at all, and that is the shape of a test that proves
+            // nothing while passing.
+            let kinds = Set(report.findings.map { $0.id.split(separator: ":").first.map(String.init) ?? $0.id })
+            for expected in ["inventory.duplicated", "inventory.versionConflict",
+                             "inventory.shimShadowed", "inventory.contested",
+                             "inventory.unmanaged"] {
+                s.require(kinds.contains(expected),
+                          "the fixture produced no \(expected): \(kinds.sorted())")
+            }
+            // Recording the machine is the one thing here FoodTruck can do
+            // by itself, so it is the one finding allowed to offer it. Naming
+            // the exception rather than loosening the rule is the point: if a
+            // second finding ever becomes fixable, that should be a decision,
+            // not a test quietly widening.
+            for finding in report.findings where finding.id != "inventory.unrecorded" {
+                s.require(!finding.fixable,
+                          "\(finding.id) offers a fix FoodTruck cannot perform")
+            }
+            s.require(report.findings.first(where: { $0.id == "inventory.unrecorded" })?.fixable
+                      == true, "recording the machine is a fix, and was not offered as one")
+            // The same claim about the one check that needs a person: keeping a
+            // history needs git, and FoodTruck does not install git.
+            s.equal(report.checks.first(where: { $0.id == "history" })?.automatable, false,
+                    "installing git was offered as something FoodTruck can do")
+        },
+
         // MARK: the record
 
         Case("Two scans of an unchanged machine produce identical bytes") { s in
