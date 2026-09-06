@@ -132,9 +132,7 @@ extension Inventory {
 
     /// Which managers are on this machine. Reads directories and looks at the
     /// programs already found; runs nothing.
-    static func managers(
-        tools: [Installed], roots: [String], home: URL, systemRoot: URL
-    ) -> [Manager] {
+    func detectedManagers(home: URL, systemRoot: URL) -> [Manager] {
         let fm = FileManager.default
         let homePath = home.standardizedFileURL.path
         var found: [Manager] = []
@@ -149,13 +147,20 @@ extension Inventory {
             return url
         }
 
-        for spec in managerCatalogue {
+        // Indexed once. Filtering every tool per spec walks the whole list
+        // sixteen times -- twice for nvm and sdkman, which declare no binary at
+        // all and so can never match.
+        let wanted = Set(Self.managerCatalogue.flatMap(\.binaries))
+        var byName: [String: [Installed]] = [:]
+        for tool in tools where wanted.contains(tool.name) {
+            byName[tool.name, default: []].append(tool)
+        }
+
+        for spec in Self.managerCatalogue {
             // A tool whose managing role is optional does not count until
             // there is evidence it is being used for it.
             if !spec.roleEvidence.isEmpty,
                !spec.roleEvidence.contains(where: { exists($0) != nil }) { continue }
-
-            var evidence: String?
 
             // A binary already picked up by the scan. Where there are several
             // -- a `mise` from Homebrew and a `mise` from its own installer is
@@ -163,15 +168,13 @@ extension Inventory {
             // wins, so the version reported for a manager belongs to a copy
             // that can be named. That there is more than one is a separate
             // finding; this only decides which one is quoted.
-            let copies = Inventory.inSearchOrder(
-                tools.filter { spec.binaries.contains($0.name) }, roots: roots)
-            if let tool = copies.first { evidence = tool.path }
+            var evidence = inSearchOrder(spec.binaries.flatMap { byName[$0] ?? [] }).first?.path
             // Otherwise a directory. This is the only way nvm, sdkman, and a
             // conda that is not on PATH are visible at all.
             if evidence == nil {
                 for directory in spec.directories {
                     if let url = exists(directory) {
-                        evidence = abbreviate(url.path, home: homePath)
+                        evidence = Self.abbreviate(url.path, home: homePath)
                         break
                     }
                 }

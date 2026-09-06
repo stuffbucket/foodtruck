@@ -660,17 +660,12 @@ enum InventorySuite {
             // picking whichever sorted last would blame the wrong tool -- and
             // the sentence reads just as confidently either way.
             let box = Sandbox(); defer { box.destroy() }
-            let brewBin = box.root.appending(path: "opt/homebrew/bin")
-            let vendorBin = box.root.appending(path: "usr/local/bin")
-            try fm.createDirectory(
-                at: box.root.appending(path: "opt/homebrew/Library/Homebrew"),
-                withIntermediateDirectories: true)
-            let node = box.root.appending(path: "opt/homebrew/Cellar/node/26.5.0/bin/node")
-            try executable(node)
-            try fm.createDirectory(at: brewBin, withIntermediateDirectories: true)
-            try fm.createSymbolicLink(at: brewBin.appending(path: "node"),
-                                      withDestinationURL: node)
-            try executable(vendorBin.appending(path: "node"))
+            // Two direct installs and two shims, and nothing else: what makes
+            // each of them a Homebrew formula or not is decided elsewhere and
+            // no assertion here reads it, so building a Cellar would only give
+            // a later reader something load-bearing to wonder about.
+            try executable(box.root.appending(path: "opt/homebrew/bin/node"))
+            try executable(box.root.appending(path: "usr/local/bin/node"))
             // Both shim directories are found by the declared search order:
             // mise's comes before asdf's, and neither is on any PATH here.
             try executable(box.root.appending(path: ".local/share/mise/shims/node"))

@@ -184,7 +184,7 @@ enum CLI {
             }
             for (name, copies) in groups {
                 print(Render.paint(name, "1"))
-                for copy in copies.sorted(by: { $0.path < $1.path }) {
+                for copy in copies {
                     let origin = copy.origin.rawValue
                         .padding(toLength: 10, withPad: " ", startingAt: 0)
                     print("  \(Render.paint(origin, "90")) \(copy.path)")

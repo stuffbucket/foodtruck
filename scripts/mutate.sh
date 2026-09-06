@@ -121,16 +121,13 @@ for file in "${TARGETS[@]}"; do
       # and the honest reading of a survivor is "nothing was watching". Diluting
       # that with mutants that cannot be watched is how a mutation report starts
       # getting argued with instead of acted on.
-      case "$pattern" in
-        *false*)
-          name="$(printf '%s' "$body" | sed -n \
-            's/^[[:space:]]*var \([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*:.*=[[:space:]]*false.*$/\1/p')"
-          if [ -n "$name" ] && grep -q -- "&$name" "$file"; then
-            printf '%s:%s\t%s\n' "$file" "$n" "$body" >> "$WORK/excluded"
-            continue
-          fi
-          ;;
-      esac
+      name=""
+      [ "$replacement" = true ] && name="$(printf '%s' "$body" | sed -n \
+        's/^[[:space:]]*var \([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*:.*=[[:space:]]*false.*$/\1/p')"
+      if [ -n "$name" ] && grep -q -- "&$name" "$file"; then
+        printf '  %s:%s\n' "$file" "$n" >> "$WORK/excluded"
+        continue
+      fi
       printf '%s\t%s\t%s\t%s\n' "$file" "$n" "$pattern" "$replacement" >> "$WORK/candidates"
     done
   done
@@ -151,7 +148,10 @@ RUNNING="$(wc -l < "$WORK/sample" | tr -d ' ')"
 
 echo "mutation testing: $RUNNING of $TOTAL candidates across ${#TARGETS[@]} files"
 EXCLUDED="$(wc -l < "$WORK/excluded" | tr -d ' ')"
-[ "$EXCLUDED" -eq 0 ] || echo "$EXCLUDED excluded as unkillable by construction (inout initialisers)"
+if [ "$EXCLUDED" -gt 0 ]; then
+  echo "$EXCLUDED excluded as unkillable by construction (inout initialisers):"
+  cat "$WORK/excluded"
+fi
 echo "if this is interrupted, \`git status\` will show the mutated file and"
 echo "\`git checkout -- <file>\` will undo it."
 echo ""

@@ -148,12 +148,14 @@ extension Inventory {
         home: String, timeout: Double
     ) async -> [Manager] {
         var resolved: [Manager] = []
+        // `path` is what makes an `Installed` unique, so this is a lookup
+        // rather than a search -- and doing it as a search compares full path
+        // strings against every tool on the machine, once per manager.
+        let byPath = Dictionary(tools.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         for var manager in managers {
             guard !manager.shellFunction else { resolved.append(manager); continue }
 
-            if let known = tools.first(where: {
-                $0.path == manager.evidence && $0.versionSource == .probed
-            }) {
+            if let known = byPath[manager.evidence], known.versionSource == .probed {
                 manager.version = known.version
             } else if let spec = Self.managerCatalogue.first(where: { $0.id == manager.id }),
                       let binary = spec.binaries.first {

@@ -184,7 +184,8 @@ struct InventoryRecipe: BuiltinRecipe {
         // The overlap, named per runtime. Whichever manager wins the race to
         // PATH decides, the decision lives in a shell startup file, and the
         // loser goes on reporting the version it believes you are using.
-        for (runtime, managers) in current.contested.sorted(by: { $0.key < $1.key }) {
+        let contested = current.contested
+        for (runtime, managers) in contested.sorted(by: { $0.key < $1.key }) {
             report.findings.append(Finding(
                 id: "inventory.contested:\(runtime)", severity: .notice,
                 title: "finding.inventory.contested",
@@ -194,7 +195,7 @@ struct InventoryRecipe: BuiltinRecipe {
         }
         report.checks.append(Check(
             id: "managers", label: "check.inventory.managers",
-            passed: current.contested.isEmpty,
+            passed: contested.isEmpty,
             // Nothing was proven if there is no manager to have an opinion.
             vacuous: current.managers.isEmpty))
 
@@ -203,7 +204,8 @@ struct InventoryRecipe: BuiltinRecipe {
         // One finding per program on purpose. Each of these is a decision
         // somebody made once and has no other record of, and collapsing them
         // into a count would lose the only useful part -- which ones.
-        for tool in current.unmanaged {
+        let unaccounted = current.unmanaged
+        for tool in unaccounted {
             report.findings.append(Finding(
                 id: "inventory.unmanaged:\(tool.path)", severity: .notice,
                 title: "finding.inventory.unmanaged",
@@ -216,7 +218,7 @@ struct InventoryRecipe: BuiltinRecipe {
         }
         report.checks.append(Check(
             id: "traceable", label: "check.inventory.traceable",
-            passed: current.unmanaged.isEmpty,
+            passed: unaccounted.isEmpty,
             // No programs found at all means nothing was proven, not that
             // everything is accounted for.
             vacuous: current.tools.isEmpty))

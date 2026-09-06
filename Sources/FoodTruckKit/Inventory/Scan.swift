@@ -68,13 +68,16 @@ extension Inventory {
         // identical, which is what makes a diff mean something.
         tools.sort { ($0.name, $0.path) < ($1.name, $1.path) }
 
-        let rootPaths = searched.map { abbreviate($0.path, home: homePath) }
-        return Inventory(
+        // Built first, then asked about itself: detecting managers needs both
+        // the tools and the roots they were found under, and taking a struct
+        // apart to pass its own two fields back in is how those two came to
+        // disagree in the first place.
+        var inventory = Inventory(
             host: host(systemRoot: systemRoot),
-            roots: rootPaths,
-            tools: tools,
-            managers: managers(tools: tools, roots: rootPaths,
-                               home: home, systemRoot: systemRoot))
+            roots: searched.map { abbreviate($0.path, home: homePath) },
+            tools: tools)
+        inventory.managers = inventory.detectedManagers(home: home, systemRoot: systemRoot)
+        return inventory
     }
 
     // MARK: - Where to look

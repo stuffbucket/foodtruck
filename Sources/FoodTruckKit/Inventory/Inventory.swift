@@ -152,7 +152,9 @@ public struct Inventory: Codable, Sendable, Equatable {
     /// `PATH` this type deliberately does not claim to know; that there are two
     /// is true regardless.
     public var duplicated: [String: [Installed]] {
-        Dictionary(grouping: tools, by: \.name).filter { $0.value.count > 1 }
+        Dictionary(grouping: tools, by: \.name)
+            .filter { $0.value.count > 1 }
+            .mapValues { inSearchOrder($0) }
     }
 
     public var countsByOrigin: [Origin: Int] {
@@ -184,14 +186,22 @@ public struct Inventory: Codable, Sendable, Equatable {
     /// So it follows FoodTruck's own search order instead: `/etc/paths` first,
     /// then the manager directories. That is the nearest defensible thing to
     /// "the copy you would get", and no more than that -- it is not the shell's
-    /// `PATH` and does not claim to be. `roots` travels in the snapshot so the
+    /// `PATH` and does not claim to be. `roots` travels in the snapshot, so the
     /// order actually used is readable rather than assumed.
-    public static func inSearchOrder(_ copies: [Installed], roots: [String]) -> [Installed] {
+    ///
+    /// An instance method, not a free function taking roots: the ranking is
+    /// only meaningful against the roots these copies were found under, and
+    /// passing the wrong ones -- or none -- silently restores the alphabet.
+    func inSearchOrder(_ copies: [Installed]) -> [Installed] {
         var order: [String: Int] = [:]
         for (index, root) in roots.enumerated() where order[root] == nil { order[root] = index }
-        // A program sits directly in its root; the scan does not recurse.
+        // A program sits directly in its root; the scan does not recurse. Cut
+        // rather than bridged through NSString, which the rest of the sources
+        // do not do and which allocates inside the comparator.
         func rank(_ tool: Installed) -> Int {
-            order[(tool.path as NSString).deletingLastPathComponent] ?? roots.count
+            let path = tool.path
+            let directory = path[..<(path.lastIndex(of: "/") ?? path.startIndex)]
+            return order[String(directory)] ?? roots.count
         }
         return copies.sorted { (rank($0), $0.path) < (rank($1), $1.path) }
     }
@@ -211,7 +221,7 @@ public struct Inventory: Codable, Sendable, Equatable {
     public var conflictingVersions: [String: [Installed]] {
         Dictionary(grouping: tools, by: \.name)
             .filter { _, copies in Set(copies.compactMap(\.version)).count > 1 }
-            .mapValues { Self.inSearchOrder($0, roots: roots) }
+            .mapValues { inSearchOrder($0) }
     }
 
     /// Commands that exist both as a manager's shim and as a directly
@@ -228,7 +238,7 @@ public struct Inventory: Codable, Sendable, Equatable {
             .filter { _, copies in
                 copies.contains(where: \.shim) && copies.contains(where: { !$0.shim })
             }
-            .mapValues { Self.inSearchOrder($0, roots: roots) }
+            .mapValues { inSearchOrder($0) }
     }
 
     /// Command names FoodTruck will actually run to ask what version they are.
