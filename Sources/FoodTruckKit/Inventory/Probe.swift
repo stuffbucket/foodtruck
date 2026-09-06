@@ -235,8 +235,16 @@ extension Inventory {
         let base = root == "/" ? "" : root
         let system = ["/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/"].map { base + $0 }
         guard system.contains(where: { path.hasPrefix($0) }) else { return false }
+        // If the link count cannot be read, assume it is a stub. Mutation
+        // testing had this defaulting the other way and nothing objected,
+        // which was the tell: the two outcomes are not symmetrical. Guessing
+        // "stub" costs a version string, because the path is resolved through
+        // the developer directory or skipped. Guessing "not a stub" means
+        // running it, and if it was a stub with nothing behind it that is the
+        // install dialog. Under uncertainty, take the side that cannot
+        // interrupt somebody.
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let links = attributes[.referenceCount] as? Int else { return false }
+              let links = attributes[.referenceCount] as? Int else { return true }
         return links > 1
     }
 

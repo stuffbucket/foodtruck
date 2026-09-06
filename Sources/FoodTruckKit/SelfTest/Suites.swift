@@ -882,6 +882,21 @@ enum InventorySuite {
                 limit: 5, environment: Exec.baseEnvironment(box.locations))
             s.require(!history.isEmpty, "converge reported success but committed nothing")
         },
+        Case("A system binary we cannot inspect is treated as a stub") { s in
+            // The two wrong answers here cost different amounts. Guessing
+            // "stub" loses a version string; guessing "not a stub" runs it,
+            // and if it was a stub with nothing behind it that is the install
+            // dialog. Uncertainty takes the side that cannot interrupt anyone.
+            let box = Sandbox(); defer { box.destroy() }
+            s.require(
+                Inventory.isDeveloperStub(
+                    box.root.appending(path: "usr/bin/vanished").path, systemRoot: box.root),
+                "a system binary that could not be inspected would have been run")
+            s.require(
+                !Inventory.isDeveloperStub(
+                    box.root.appending(path: "elsewhere/thing").path, systemRoot: box.root),
+                "only the system directories are Apple's to stub")
+        },
         Case("The git stub in /usr/bin is never what we run") { s in
             let box = Sandbox(); defer { box.destroy() }
             let stub = box.root.appending(path: "usr/bin/git")
