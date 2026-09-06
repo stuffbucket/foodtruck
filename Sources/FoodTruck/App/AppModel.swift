@@ -131,6 +131,11 @@ final class AppModel {
     private func announce(_ service: Service) {
         // Spoken by VoiceOver, so it says the outcome rather than describing the
         // screen: someone who cannot see the table still learns what happened.
+        //
+        // The clean wording states its scope for the same reason the visible
+        // summary does. "Everything is where it should be" was removed from the
+        // screen and left here, which left the overclaim in place for exactly
+        // the people who cannot check it against the rest of the window.
         announcement = needingAttention == 0
             ? t("a11y.announce.clean")
             : t("a11y.announce.drift", [

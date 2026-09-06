@@ -63,7 +63,7 @@
 "finding.blast.refused" = "%{recipe} cambiaría %{blast}, y esta ejecución se limita a %{ceiling}.";
 "finding.blast.refused.remedy" = "No se cambió nada. Ejecútalo desde una sesión que lo permita, o en un Mac que estés dispuesto a modificar.";
 
-"a11y.announce.clean" = "Comprobación terminada. Todo está en su sitio.";
+"a11y.announce.clean" = "Comprobación terminada. Nada requiere tu atención. FoodTruck solo puede responder por las recetas que tiene.";
 "a11y.announce.drift" = "Comprobación terminada. %{drift} requieren atención, %{blocked} en espera, %{failed} con error.";
 "a11y.status" = "Estado: %{state}";
 "a11y.recipe.row" = "%{name}, %{state}, %{findings} hallazgos";
@@ -111,3 +111,33 @@
 "detail.checked" = "Qué comprobó FoodTruck";
 "detail.nothingToCheck" = "Esta receta no declara nada que FoodTruck pueda verificar.";
 "summary.clean.help" = "FoodTruck solo puede responder por las recetas que tiene. Lo que no tiene receta no se comprobó.";
+
+/* Inventario */
+"recipe.env.inventory.name" = "Inventario";
+"recipe.env.inventory.summary" = "Todos los programas de este Mac, de dónde vienen y qué ha cambiado desde la última vez.";
+"finding.inventory.unrecorded" = "Este Mac todavía no se ha registrado, así que no hay nada con lo que compararlo.";
+"finding.inventory.changed" = "Este Mac ha cambiado desde el último registro (añadidos: %{added}, eliminados: %{removed}).";
+"finding.inventory.host.changed" = "El sistema operativo pasó de %{before} a %{after}.";
+"finding.inventory.unmanaged" = "%{tool} está instalado en %{path}, y nada en este Mac lo gestiona.";
+"finding.inventory.unmanaged.remedy" = "Puede que sea intencionado. Instálalo con un gestor de paquetes si prefieres que quede al cuidado de algo, o elimínalo si ya no recuerdas haberlo puesto ahí.";
+"finding.inventory.duplicated" = "Algunos nombres de comando están instalados en más de un sitio (%{count}).";
+"finding.inventory.duplicated.remedy" = "Ejecuta «foodtruck inventory --duplicates» para ver cuáles son y dónde está cada copia.";
+"finding.inventory.nogit" = "FoodTruck no puede mantener un historial de este Mac, porque no encuentra un git que esté dispuesto a ejecutar.";
+"finding.inventory.nogit.remedy" = "Instala las Command Line Tools con «xcode-select --install», o instala git con Homebrew. El inventario se registra igualmente.";
+"finding.inventory.historyFailed" = "El inventario se registró, pero git no lo añadió al historial.";
+"check.inventory.recorded" = "Este Mac coincide con el último inventario registrado";
+"check.inventory.traceable" = "Cada programa encontrado se puede atribuir a algo que lo instaló";
+"check.inventory.unique" = "Ningún comando está instalado con dos versiones distintas";
+"check.inventory.history" = "Los cambios de este Mac se guardan en un historial";
+"summary.unmet.one" = "1 comprobación no superada";
+"summary.unmet.other" = "%{count} comprobaciones no superadas";
+
+/* Gestores de entornos */
+"finding.inventory.versionConflict" = "%{tool} está instalado más de una vez con versiones distintas: %{versions}. Cuál se ejecuta depende del orden de tu PATH.";
+"finding.inventory.versionConflict.remedy" = "Elimina la copia que no querías conservar, o pon antes en tu PATH la que sí. FoodTruck no va a adivinar cuál.";
+"finding.inventory.contested" = "%{runtime} lo puede gestionar más de una herramienta en este Mac: %{managers}.";
+"finding.inventory.contested.remedy" = "No van a cooperar. Decide la que llegue antes a tu PATH, así que elige una para este runtime y quita los shims de la otra del arranque de tu shell.";
+"check.inventory.managers" = "Ningún runtime lo reclaman dos gestores distintos";
+"finding.inventory.shimShadowed" = "%{tool} existe como shim de %{manager} (%{shim}) y también como copia instalada directamente en la versión %{version} (%{direct}). Cuál se ejecuta depende del orden de tu PATH.";
+"finding.inventory.shimShadowed.remedy" = "El shim no tiene una versión fija — se resuelve según el directorio — así que no se pueden comparar, solo elegir. Decide cuál debe ganar y quita la otra de tu PATH.";
+"check.inventory.shims" = "Ningún shim de un gestor queda tapado por una copia instalada directamente";

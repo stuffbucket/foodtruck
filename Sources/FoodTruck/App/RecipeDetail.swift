@@ -171,6 +171,11 @@ struct FindingRow: View {
 struct CheckRow: View {
     let check: Check
 
+    /// A builtin's label is a message key; a recipe on disk supplies prose.
+    /// `t` passes prose through untouched and records no miss for it, so one
+    /// call serves both.
+    private var label: String { t(check.label) }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: check.vacuous ? "minus.circle"
@@ -180,7 +185,7 @@ struct CheckRow: View {
                                  : AnyShapeStyle(Color.orange))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(check.label)
+                Text(label)
                     .foregroundStyle(check.vacuous ? .secondary : .primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if check.vacuous {
@@ -196,6 +201,6 @@ struct CheckRow: View {
         .padding(.vertical, 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(check.label). \(t(check.vacuous ? "check.vacuous" : check.passed ? "check.passed" : "check.failed"))")
+            "\(label). \(t(check.vacuous ? "check.vacuous" : check.passed ? "check.passed" : "check.failed"))")
     }
 }

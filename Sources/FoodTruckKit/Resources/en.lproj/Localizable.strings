@@ -71,7 +71,7 @@
 "finding.pins.missing" = "FoodTruck cannot find the list of tools it is supposed to install.";
 
 /* Spoken by VoiceOver when a run finishes. Says the outcome, not the layout. */
-"a11y.announce.clean" = "Check complete. Everything is where it should be.";
+"a11y.announce.clean" = "Check complete. Nothing needs your attention. FoodTruck can only speak for the recipes it has.";
 "a11y.announce.drift" = "Check complete. %{drift} need attention, %{blocked} waiting, %{failed} failed.";
 "a11y.status" = "Status: %{state}";
 "a11y.recipe.row" = "%{name}, %{state}, %{findings} findings";
@@ -121,3 +121,33 @@
 "detail.checked" = "What FoodTruck checked";
 "detail.nothingToCheck" = "This recipe declares nothing FoodTruck can verify.";
 "summary.clean.help" = "FoodTruck can only speak for the recipes it has. Anything without a recipe was not checked.";
+
+/* Inventory — what is on this Mac, and what has changed since last time. */
+"recipe.env.inventory.name" = "Inventory";
+"recipe.env.inventory.summary" = "Every program on this Mac, where it came from, and what has changed since last time.";
+"finding.inventory.unrecorded" = "This Mac has not been recorded yet, so there is nothing to compare it against.";
+"finding.inventory.changed" = "This Mac has changed since it was last recorded (added: %{added}, removed: %{removed}).";
+"finding.inventory.host.changed" = "The operating system changed from %{before} to %{after}.";
+"finding.inventory.unmanaged" = "%{tool} is installed at %{path}, and nothing on this Mac manages it.";
+"finding.inventory.unmanaged.remedy" = "That may well be deliberate. Install it through a package manager if you would rather it were looked after, or remove it if you no longer remember putting it there.";
+"finding.inventory.duplicated" = "Some command names are installed in more than one place (%{count}).";
+"finding.inventory.duplicated.remedy" = "Run “foodtruck inventory --duplicates” to see which ones, and where each copy lives.";
+"finding.inventory.nogit" = "FoodTruck cannot keep a history of this Mac, because it cannot find a git it is willing to run.";
+"finding.inventory.nogit.remedy" = "Install the Command Line Tools with “xcode-select --install”, or install git with Homebrew. The inventory itself is recorded either way.";
+"finding.inventory.historyFailed" = "The inventory was recorded, but git would not add it to the history.";
+"check.inventory.recorded" = "This Mac matches the last recorded inventory";
+"check.inventory.traceable" = "Every program found can be traced to something that installed it";
+"check.inventory.unique" = "No command is installed at two different versions";
+"check.inventory.history" = "Changes to this Mac are kept in a history";
+"summary.unmet.one" = "1 check did not pass";
+"summary.unmet.other" = "%{count} checks did not pass";
+
+/* Environment managers — the tools that decide what the other tools are. */
+"finding.inventory.versionConflict" = "%{tool} is installed more than once at different versions: %{versions}. Which one runs depends on the order of your PATH.";
+"finding.inventory.versionConflict.remedy" = "Remove the copy you did not mean to keep, or put the one you want earlier on your PATH. FoodTruck will not guess which.";
+"finding.inventory.contested" = "%{runtime} can be managed by more than one tool on this Mac: %{managers}.";
+"finding.inventory.contested.remedy" = "They will not co-operate. Whichever reaches your PATH first decides, so pick one for this runtime and remove the other's shims from your shell startup.";
+"check.inventory.managers" = "No runtime is claimed by two different managers";
+"finding.inventory.shimShadowed" = "%{tool} exists both as a %{manager} shim (%{shim}) and as a copy installed directly at %{version} (%{direct}). Which one runs depends on the order of your PATH.";
+"finding.inventory.shimShadowed.remedy" = "The shim has no fixed version — it resolves per directory — so these cannot be compared, only chosen between. Decide which should win and remove the other from your PATH.";
+"check.inventory.shims" = "No manager's shim is shadowed by a directly installed copy";

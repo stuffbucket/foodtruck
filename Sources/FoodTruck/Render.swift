@@ -62,6 +62,12 @@ enum Render {
         for r in service.results {
             let id = r.recipe.padding(toLength: max(width, 20), withPad: " ", startingAt: 0)
             print("\(badge(r.outcome))  \(paint(id, "1"))  \(t(descriptorName(r)))")
+            // A recipe that reports one finding per thing it found -- the
+            // inventory lists every unmanaged program separately, on purpose --
+            // otherwise prints the same remedy seventeen times, which buries
+            // the seventeen findings it was meant to explain. The window shows
+            // findings one at a time and still gets it on each.
+            var remediesSaid: Set<String> = []
             for finding in r.report.findings.prefix(6) {
                 // Shape carries the meaning as well as colour: an unmet goal is
                 // an unticked box, a notice is a dot, a risk is a bang. Reads
@@ -73,7 +79,10 @@ enum Render {
                 }
                 print("             \(bullet) \(t(finding.title, finding.args))")
                 if let remedy = finding.remedy {
-                    print("               \(paint("→ " + t(remedy, finding.args), "36"))")
+                    let said = t(remedy, finding.args)
+                    if remediesSaid.insert(said).inserted {
+                        print("               \(paint("→ " + said, "36"))")
+                    }
                 }
             }
             if r.report.findings.count > 6 {
@@ -84,11 +93,24 @@ enum Render {
             // the whole point is that this one can.
             if r.outcome == .converged {
                 for check in r.report.checks {
+                    // A builtin's label is a message key; a recipe on disk
+                    // supplies prose. `t` passes prose through untouched and
+                    // records no miss for it, so one call serves both.
+                    let label = t(check.label)
                     if check.vacuous {
-                        print("             \(paint("·", "90")) \(check.label) "
+                        print("             \(paint("·", "90")) \(label) "
                               + paint("— " + t("check.vacuous"), "90"))
+                    } else if check.passed {
+                        print("             \(paint("✓", "32")) \(label)")
                     } else {
-                        print("             \(paint("✓", "32")) \(check.label)")
+                        // A converged recipe can still hold a check that did
+                        // not pass: a notice does not make a recipe drift, so
+                        // "every program can be traced to an installer" comes
+                        // back false on any real Mac while nothing is being
+                        // asked of anybody. Ticking it anyway was the same
+                        // overclaim as the summary that used to say everything
+                        // was where it should be.
+                        print("             \(paint("☐", "33")) \(label)")
                     }
                 }
             }
@@ -122,8 +144,14 @@ enum Render {
         let vacuous = checks.filter(\.vacuous).count
 
         let summary: String
+        let unmet = checks.filter { !$0.passed && !$0.vacuous }.count
         if clean {
             var parts = [paint(t("summary.nothingToFix"), "32"), tn("summary.proven", proven)]
+            // Counted separately from drift, and said out loud. Nothing here
+            // needs the user to act, but a check that came back false is not
+            // evidence of health and must not be quietly folded into the
+            // number of checks that passed.
+            if unmet > 0 { parts.append(paint(tn("summary.unmet", unmet), "33")) }
             if vacuous > 0 { parts.append(paint(tn("summary.vacuous", vacuous), "90")) }
             summary = parts.joined(separator: t("list.separator"))
         } else {
