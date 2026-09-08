@@ -4,3 +4,6 @@ dist/
 
 # Personal Claude Code settings — local only, never shared.
 .claude/settings.local.json
+
+# SwiftPM build products.
+.build/

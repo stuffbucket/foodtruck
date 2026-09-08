@@ -1,0 +1,12 @@
+{
+  "id": "tool.brew",
+  "name": "recipe.tool.brew.name",
+  "summary": "recipe.tool.brew.summary",
+  "engine": "taskfile",
+  "requires": ["core.toolbox"],
+  "provides": ["pkg:brew"],
+  "verbs": ["detect", "audit", "plan", "converge", "verify"],
+  "blast": "system",
+  "timeout": 300,
+  "symbol": "shippingbox"
+}

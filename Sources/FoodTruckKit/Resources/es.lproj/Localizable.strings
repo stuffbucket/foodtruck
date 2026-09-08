@@ -1,0 +1,222 @@
+/* FoodTruck — Español.
+   Los marcadores %{nombre} pueden reordenarse libremente; se sustituyen por
+   nombre, no por posición, precisamente para que esto sea posible. */
+
+"app.name" = "FoodTruck";
+"app.tagline" = "Mantiene honesto el entorno de desarrollo de tu Mac.";
+
+"state.converged" = "Listo";
+"state.drift" = "Requiere atención";
+"state.blocked" = "Esperando a otra cosa";
+"state.failed" = "No se pudo comprobar";
+"state.unknown" = "Sin comprobar";
+
+"severity.ok" = "Listo";
+"severity.notice" = "Información";
+"severity.drift" = "Requiere atención";
+"severity.risk" = "Problema de seguridad";
+
+"fault.recipeMissing.title" = "Falta la receta de %{recipe}.";
+"fault.recipeMissing.remedy" = "Restáurala con «foodtruck pantry restore», que reconstruye la despensa desde el último estado correcto conocido.";
+"fault.recipeMalformed.title" = "No se pudo leer la receta de %{recipe}.";
+"fault.recipeMalformed.remedy" = "Ejecuta «foodtruck lint recipes» para ver qué línea falla, o vuelve atrás con «foodtruck pantry restore».";
+"fault.verbUnsupported.title" = "%{recipe} no sabe cómo hacer «%{verb}».";
+"fault.verbUnsupported.remedy" = "Es normal en algunas recetas. No ocurre nada malo y no hace falta hacer nada.";
+"fault.engineUnavailable.title" = "%{recipe} necesita el motor %{engine}, que aún no está instalado.";
+"fault.engineUnavailable.remedy" = "Converge «%{unlock}» primero — FoodTruck puede hacerlo por ti.";
+"fault.unexpectedExit.title" = "%{recipe} se detuvo de forma inesperada durante «%{verb}».";
+"fault.unexpectedExit.remedy" = "Vuelve a ejecutarlo: converger es seguro repetirlo y continúa donde se quedó. Si falla igual dos veces, el diagnóstico de abajo explica por qué.";
+"fault.malformedReport.title" = "%{recipe} informó de algo que FoodTruck no pudo leer.";
+"fault.malformedReport.remedy" = "El fallo está en la receta, no en tu Mac. Ejecuta «foodtruck lint recipes %{recipe}».";
+"fault.timedOut.title" = "%{recipe} no terminó dentro de su tiempo límite.";
+"fault.timedOut.remedy" = "Se detuvo de forma segura. Comprueba tu conexión y vuelve a intentarlo — converger se puede repetir sin riesgo.";
+"fault.readOnlyViolation.title" = "%{recipe} intentó modificar tu Mac cuando solo debía inspeccionarlo.";
+"fault.readOnlyViolation.remedy" = "FoodTruck bloqueó el cambio. Esta receta no es fiable: repórtala y déjala desactivada.";
+"fault.integrityFailure.title" = "Una descarga de %{recipe} no coincide con su suma de verificación.";
+"fault.integrityFailure.remedy" = "FoodTruck la descartó y no cambió nada. Puede ser una réplica desactualizada, o que la descarga haya sido manipulada. No lo reintentes en una red que no sea de confianza.";
+"fault.cancelled.title" = "Se canceló %{recipe}.";
+"fault.cancelled.remedy" = "No quedó nada a medias. Vuelve a ejecutarlo cuando quieras.";
+
+"blast.contained" = "Solo la carpeta de FoodTruck";
+"blast.home" = "Tu carpeta de inicio";
+"blast.system" = "Ubicaciones del sistema";
+"blast.privileged" = "Requiere tu contraseña";
+
+"recipe.core.locations.name" = "Espacio de trabajo";
+"recipe.core.locations.summary" = "Las carpetas propias de FoodTruck, en las ubicaciones XDG que esperan tus dotfiles.";
+"recipe.core.toolbox.name" = "Herramientas";
+"recipe.core.toolbox.summary" = "Las herramientas que FoodTruck ejecuta para sí mismo, cada una fijada a una versión y verificada por suma de comprobación.";
+"recipe.core.cookbook.name" = "Recetario";
+"recipe.core.cookbook.summary" = "Las recetas que FoodTruck sabe seguir en este Mac.";
+"recipe.tool.brew.name" = "Homebrew";
+"recipe.tool.brew.summary" = "Homebrew y todo lo que pide tu Brewfile.";
+
+"finding.dir.missing" = "%{path} todavía no existe.";
+"finding.dir.unwritable" = "%{path} existe, pero FoodTruck no puede escribir en él.";
+"finding.tool.absent" = "%{tool} no está instalado.";
+"finding.tool.unpinned" = "%{tool} está instalado, pero no fijado a una versión.";
+"finding.tool.stale" = "%{tool} está en %{observed}; el perfil pide %{desired}.";
+"finding.task.drift" = "%{task}";
+"finding.task.manual.remedy" = "Este paso te corresponde a ti, no a FoodTruck. Abre la receta para ver qué espera.";
+"finding.recipe.notInstalled" = "FoodTruck no pudo instalar su receta %{recipe}.";
+"finding.pins.missing" = "FoodTruck no encuentra la lista de herramientas que debe instalar.";
+"finding.blast.refused" = "%{recipe} cambiaría %{blast}, y esta ejecución se limita a %{ceiling}.";
+"finding.blast.refused.remedy" = "No se cambió nada. Ejecútalo desde una sesión que lo permita, o en un Mac que estés dispuesto a modificar.";
+
+"a11y.announce.clean" = "Comprobación terminada. Nada requiere tu atención. FoodTruck solo puede responder por las recetas que tiene.";
+"a11y.announce.drift" = "Comprobación terminada. %{drift} requieren atención, %{blocked} en espera, %{failed} con error.";
+"a11y.status" = "Estado: %{state}";
+"a11y.recipe.row" = "%{name}, %{state}, %{findings} hallazgos";
+"a11y.busy" = "Comprobando tu Mac";
+
+"window.title" = "FoodTruck";
+"action.audit" = "Comprobar de nuevo";
+"action.audit.help" = "Examina tu entorno sin modificarlo y después actualiza el historial local privado de FoodTruck.";
+"action.converge" = "Arreglar lo posible";
+"action.converge.help" = "Aplica todos los cambios que FoodTruck puede hacer con seguridad. Se puede repetir sin riesgo.";
+"action.converge.one" = "Arreglar esto";
+"empty.title" = "Nada comprobado todavía";
+"empty.body" = "Comprueba tu Mac para ver qué coincide con tu perfil y qué se ha desviado. Tu entorno no se modifica hasta que lo pidas.";
+"detail.findings" = "Qué requiere atención";
+"detail.facts" = "Qué encontró FoodTruck";
+"detail.blast" = "Puede cambiar";
+"detail.clean" = "Todo lo que pide esta receta ya se cumple.";
+"summary.attention.one" = "1 requiere atención";
+"summary.attention.other" = "%{count} requieren atención";
+"summary.clean" = "Todo está en su sitio";
+"summary.hint" = "Ejecuta «foodtruck converge» para arreglar lo que se pueda.";
+"fault.detail.hint" = "FOODTRUCK_DEBUG=1 muestra la salida sin procesar.";
+"findings.more.one" = "1 más";
+"findings.more.other" = "%{count} más";
+
+"summary.drift.one" = "1 requiere atención";
+"summary.drift.other" = "%{count} requieren atención";
+"summary.blocked.one" = "1 en espera";
+"summary.blocked.other" = "%{count} en espera";
+"summary.failed.one" = "1 con error";
+"summary.failed.other" = "%{count} con error";
+"list.separator" = ", ";
+"recipe.customised" = "Personalizada";
+"recipe.customised.help" = "Has editado esta receta. FoodTruck dejará tu versión intacta.";
+"setup.needed" = "FoodTruck aún no ha terminado de instalarse en este Mac.";
+"setup.needed.remedy" = "Ejecuta «foodtruck converge» una vez. Solo escribe dentro de la carpeta de FoodTruck.";
+"summary.nothingToFix" = "Nada requiere tu atención";
+"summary.proven.one" = "1 comprobación superada";
+"summary.proven.other" = "%{count} comprobaciones superadas";
+"summary.unmet.one" = "1 comprobación no superada";
+"summary.unmet.other" = "%{count} comprobaciones no superadas";
+"summary.vacuous.one" = "1 no demostró nada";
+"summary.vacuous.other" = "%{count} no demostraron nada";
+"check.vacuous" = "No hay elementos solicitados configurados, así que no hay nada que comprobar.";
+"check.passed" = "Superada";
+"check.failed" = "Todavía no";
+"detail.checked" = "Qué comprobó FoodTruck";
+"detail.nothingToCheck" = "Esta receta no declara nada que FoodTruck pueda verificar.";
+"summary.clean.help" = "FoodTruck solo puede responder por las recetas que tiene. Lo que no tiene receta no se comprobó.";
+
+/* Inventario */
+"recipe.env.inventory.name" = "Inventario";
+"recipe.env.inventory.summary" = "Busca versiones en conflicto, shims ocultos, gestores rivales e instalaciones sin explicación.";
+"value.unknown" = "desconocida";
+"value.none" = "ninguno";
+"value.notInstalled" = "no instaladas";
+"inventory.origin.homebrew" = "Homebrew";
+"inventory.origin.mise" = "mise";
+"inventory.origin.asdf" = "asdf";
+"inventory.origin.cargo" = "Cargo";
+"inventory.origin.npm" = "npm";
+"inventory.origin.pipx" = "pipx";
+"inventory.origin.gem" = "RubyGems";
+"inventory.origin.go" = "Go";
+"inventory.origin.foodtruck" = "FoodTruck";
+"inventory.origin.apple" = "Apple";
+"inventory.origin.xcode" = "Xcode";
+"inventory.origin.unmanaged" = "sin gestor";
+"inventory.kind.shim" = "shim de un gestor";
+"inventory.kind.direct" = "instalación directa";
+"inventory.overview.clean" = "FoodTruck no encontró conflictos de versión, shims ni gestores que puedan cambiar qué comando se ejecuta.";
+"inventory.overview.attention" = "FoodTruck encontró ambigüedades que pueden cambiar qué comando o versión se ejecuta.";
+"inventory.overview.programs" = "Copias ejecutables comprobadas";
+"inventory.overview.locations" = "Ubicaciones examinadas";
+"inventory.overview.managers" = "Gestores de entornos encontrados";
+"inventory.changes.title" = "Cambios desde la comprobación anterior";
+"inventory.changes.explanation" = "Son observaciones históricas, no errores. FoodTruck guarda esta comprobación localmente para mostrar los cambios la próxima vez.";
+"inventory.history.title" = "Historial local de cambios";
+"inventory.worthKnowing.one" = "Otra observación";
+"inventory.worthKnowing.other" = "%{count} observaciones más";
+"finding.inventory.firstObservation" = "El seguimiento de cambios empezó con esta comprobación; no hay una observación anterior con la que comparar.";
+"finding.inventory.host.changed" = "macOS cambió de %{before} a %{after}.";
+"finding.inventory.coverage.added" = "FoodTruck examinó ubicaciones adicionales esta vez: %{paths}. Su contenido no se considera recién instalado.";
+"finding.inventory.coverage.removed" = "FoodTruck dejó de examinar estas ubicaciones: %{paths}. Su contenido anterior no se considera eliminado.";
+"finding.inventory.coverage.reordered" = "Cambió el orden de búsqueda. Esto puede cambiar qué copia considera FoodTruck como primera cuando un comando existe en varias ubicaciones.";
+"finding.inventory.managers.changed" = "Los gestores de entornos cambiaron de %{before} a %{after}.";
+"finding.inventory.program.added" = "Apareció una copia de %{tool} en %{path} (%{origin}, versión %{version}).";
+"finding.inventory.program.removed" = "Desapareció una copia de %{tool} de %{path} (%{origin}, versión %{version}).";
+"finding.inventory.program.versionChanged" = "%{tool} en %{path} cambió de la versión %{before} a la %{after}.";
+"finding.inventory.program.originChanged" = "%{tool} en %{path} cambió de origen: de %{before} a %{after}.";
+"finding.inventory.program.targetChanged" = "%{tool} en %{path} ahora resuelve a %{after}; antes resolvía a %{before}.";
+"finding.inventory.program.kindChanged" = "%{tool} en %{path} cambió de %{before} a %{after}.";
+"finding.inventory.program.replaced" = "Se sustituyó el ejecutable %{tool} en %{path}.";
+"finding.inventory.recordFailed" = "FoodTruck comprobó el entorno, pero no pudo guardar esta observación para la próxima vez.";
+"finding.inventory.recordFailed.remedy" = "Comprueba que FoodTruck pueda escribir en su carpeta de datos y que haya espacio libre. La comprobación del entorno sí terminó.";
+"finding.inventory.probeRefused" = "FoodTruck omitió las comprobaciones de versión porque podían ejecutarse más programas de los permitidos por su límite de seguridad. Esta observación no se guardó.";
+"finding.inventory.probeRefused.remedy" = "Revisa las ubicaciones examinadas en Diagnóstico. FoodTruck no ejecutará una cantidad inesperadamente grande de programas solo para averiguar sus versiones.";
+"finding.inventory.snapshotUnreadable" = "FoodTruck no pudo leer el inventario anterior, así que dejó el archivo intacto y no lo sustituyó.";
+"finding.inventory.snapshotUnreadable.remedy" = "Revisa o restaura inventory.json en la carpeta de datos local de FoodTruck y vuelve a comprobar.";
+"finding.inventory.unmanaged" = "%{tool} está instalado en %{path}, y nada en este Mac lo gestiona.";
+"finding.inventory.unmanaged.remedy" = "Puede que sea intencionado. Instálalo con un gestor de paquetes si prefieres que quede al cuidado de algo, o elimínalo si ya no recuerdas haberlo puesto ahí.";
+"finding.inventory.duplicated" = "Algunos nombres de comando tienen más de una copia sin un conflicto de versión demostrado (%{count}).";
+"finding.inventory.duplicated.remedy" = "No hace falta actuar salvo que un comando se comporte de forma distinta a la versión que esperas.";
+"finding.inventory.nogit" = "FoodTruck puede guardar localmente la comparación más reciente, pero no las anteriores porque no encuentra un git utilizable.";
+"finding.inventory.nogit.remedy" = "Instala las Command Line Tools con «xcode-select --install» o instala git con Homebrew si quieres un historial con varias instantáneas.";
+"finding.inventory.historyFailed" = "Se guardó la comparación más reciente, pero git no pudo añadirla al historial local.";
+"finding.inventory.historyFailed.remedy" = "La comparación más reciente sigue funcionando. Abre Diagnóstico para ver el error de git si quieres reparar el historial local anterior.";
+"check.inventory.unique" = "Ningún comando está instalado con dos versiones distintas";
+
+/* Gestores de entornos */
+"finding.inventory.versionConflict" = "%{tool} está instalado más de una vez con versiones distintas: %{versions}. Cuál se ejecuta depende del orden de tu PATH.";
+"finding.inventory.versionConflict.remedy" = "Elimina la copia que no querías conservar, o pon antes en tu PATH la que sí. FoodTruck no va a adivinar cuál.";
+"finding.inventory.contested" = "%{runtime} lo puede gestionar más de una herramienta en este Mac: %{managers}.";
+"finding.inventory.contested.remedy" = "No van a cooperar. Decide la que llegue antes a tu PATH, así que elige una para este runtime y quita los shims de la otra del arranque de tu shell.";
+"check.inventory.managers" = "Ningún runtime lo reclaman dos gestores distintos";
+"finding.inventory.shimShadowed" = "Los mismos comandos aparecen como shims de %{manager} en %{shim} y como instalaciones directas en %{direct}: %{tools}. El orden de PATH decide cuál se ejecuta.";
+"finding.inventory.shimShadowed.remedy" = "Elige qué directorio debe proporcionar estos comandos. Colócalo primero en PATH y quita el otro directorio de PATH si no lo necesitas.";
+"check.inventory.shims" = "Ningún shim de un gestor queda tapado por una copia instalada directamente";
+
+/* Panel de resultados */
+"detail.noAction" = "No hace falta realizar ninguna acción.";
+"detail.action" = "Qué hará FoodTruck";
+"detail.changeScope" = "Dónde se harán cambios";
+"detail.nextSteps" = "Pasos siguientes";
+"detail.observations.one" = "1 observación";
+"detail.observations.other" = "%{count} observaciones";
+"detail.diagnostics" = "Diagnóstico";
+"detail.current" = "Encontrado";
+"detail.expected" = "Solicitado";
+"detail.runLog" = "Registro de ejecución";
+"a11y.recipe.actions.one" = "%{name}, %{state}, 1 elemento requiere atención";
+"a11y.recipe.actions.other" = "%{name}, %{state}, %{count} elementos requieren atención";
+
+/* Base de configuración */
+"recipe.core.settings.name" = "Configuración";
+"recipe.core.settings.summary" = "La política editable de FoodTruck, inicializada con los valores predeterminados de la aplicación firmada.";
+"finding.settings.missing" = "La configuración aún no se ha copiado en %{path}.";
+"finding.settings.invalid" = "FoodTruck no puede usar la configuración de %{path} y la dejó intacta.";
+"finding.settings.invalid.remedy" = "Corrige o restaura settings.json. FoodTruck nunca sustituirá un archivo de configuración no válido que ya exista.";
+"check.settings.valid" = "La configuración usa el esquema compatible y contiene rutas seguras";
+"fault.settingsUnavailable.title" = "FoodTruck no pudo preparar su configuración.";
+"fault.settingsUnavailable.remedy" = "Vuelve a ejecutar la convergencia. Si el archivo predeterminado incluido sigue sin estar disponible, reinstala o actualiza FoodTruck; el diagnóstico identifica el archivo que falta.";
+"fault.settingsInvalid.title" = "FoodTruck no pudo leer la configuración existente en %{path}.";
+"fault.settingsInvalid.remedy" = "Corrige o restaura settings.json en la ruta indicada. FoodTruck dejará intacto el archivo existente.";
+"fault.runtimeEnvironmentInvalid.title" = "FoodTruck no pudo resolver la configuración para este entorno de ejecución.";
+"fault.runtimeEnvironmentInvalid.remedy" = "Corrige HOME, FOODTRUCK_SCAN_ROOT o cualquier ruta de configuración derivada del entorno indicada en el diagnóstico y vuelve a ejecutar FoodTruck. El archivo de configuración no se modificó.";
+
+/* Detección acotada de software e historial. */
+"inventory.overview.software" = "Unidades de software encontradas";
+"finding.inventory.software.discoveryRefused" = "FoodTruck no pudo completar la detección de software de forma segura. Esta observación no se guardó.";
+"finding.inventory.software.discoveryRefused.remedy" = "Revisa las ubicaciones de software configuradas en Diagnóstico. FoodTruck no examinará ubicaciones protegidas, ilegibles o inesperadamente grandes.";
+"finding.inventory.software.coverage.added" = "FoodTruck examinó ubicaciones de software adicionales esta vez: %{paths}. Su contenido no se considera software recién añadido.";
+"finding.inventory.software.coverage.removed" = "FoodTruck dejó de examinar estas ubicaciones de software: %{paths}. Su contenido anterior no se considera software eliminado.";
+"finding.inventory.software.added" = "Se añadió software: %{software}.";
+"finding.inventory.software.removed" = "Se eliminó software: %{software}.";
+"finding.inventory.software.changed" = "Software modificado: %{software}.";
