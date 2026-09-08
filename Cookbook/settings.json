@@ -1,0 +1,1154 @@
+{
+  "schema": "foodtruck.settings/1",
+  "vars": {},
+  "inventory": {
+    "scan": {
+      "declarations": [],
+      "sources": [
+        {
+          "type": "literal",
+          "path": "/opt/homebrew/bin"
+        },
+        {
+          "type": "literal",
+          "path": "/opt/homebrew/sbin"
+        },
+        {
+          "type": "literal",
+          "path": "/usr/local/bin"
+        },
+        {
+          "type": "literal",
+          "path": "/usr/local/sbin"
+        },
+        {
+          "type": "literal",
+          "path": "~/.local/bin"
+        },
+        {
+          "type": "literal",
+          "path": "~/.local/share/mise/shims",
+          "scanKind": "shim"
+        },
+        {
+          "type": "literal",
+          "path": "~/.asdf/shims",
+          "scanKind": "shim"
+        },
+        {
+          "type": "literal",
+          "path": "~/.cargo/bin"
+        },
+        {
+          "type": "literal",
+          "path": "~/go/bin"
+        },
+        {
+          "type": "literal",
+          "path": "~/.bun/bin"
+        },
+        {
+          "type": "literal",
+          "path": "~/.deno/bin"
+        }
+      ]
+    },
+    "discovery": {
+      "roots": [
+        {
+          "source": {
+            "type": "literal",
+            "path": "/opt/homebrew/Cellar"
+          },
+          "strategy": "homebrewCellar",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/usr/local/Cellar"
+          },
+          "strategy": "homebrewCellar",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/opt/homebrew/Caskroom"
+          },
+          "strategy": "homebrewCaskroom",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/usr/local/Caskroom"
+          },
+          "strategy": "homebrewCaskroom",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/Applications"
+          },
+          "strategy": "applicationBundles",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/Applications"
+          },
+          "strategy": "applicationBundles",
+          "exclusions": []
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/opt"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "Homebrew",
+            "homebrew"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/local"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "bin",
+            "etc",
+            "include",
+            "lib",
+            "libexec",
+            "sbin",
+            "share",
+            "state"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "/usr/local"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "Caskroom",
+            "Cellar",
+            "Homebrew",
+            "bin",
+            "etc",
+            "include",
+            "lib",
+            "libexec",
+            "opt",
+            "sbin",
+            "share",
+            "state",
+            "var"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/.local"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "bin",
+            "etc",
+            "include",
+            "lib",
+            "libexec",
+            "sbin",
+            "share",
+            "state"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/.local/share"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "foodtruck"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/.config"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "foodtruck"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/AppData/Local"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "foodtruck"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/AppData/LocalLow"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "foodtruck"
+          ]
+        },
+        {
+          "source": {
+            "type": "literal",
+            "path": "~/AppData/Roaming"
+          },
+          "strategy": "topLevelFootprints",
+          "exclusions": [
+            "foodtruck"
+          ]
+        }
+      ],
+      "exclusions": [
+        {
+          "type": "literal",
+          "path": "~/.ssh"
+        },
+        {
+          "type": "literal",
+          "path": "~/.gnupg"
+        },
+        {
+          "type": "literal",
+          "path": "~/Library"
+        },
+        {
+          "type": "literal",
+          "path": "~/Desktop"
+        },
+        {
+          "type": "literal",
+          "path": "~/Documents"
+        },
+        {
+          "type": "literal",
+          "path": "~/Downloads"
+        },
+        {
+          "type": "literal",
+          "path": "~/Movies"
+        },
+        {
+          "type": "literal",
+          "path": "~/Music"
+        },
+        {
+          "type": "literal",
+          "path": "/System/Volumes"
+        },
+        {
+          "type": "literal",
+          "path": "/Volumes"
+        },
+        {
+          "type": "literal",
+          "path": "/Network"
+        },
+        {
+          "type": "literal",
+          "path": "/private/var"
+        }
+      ]
+    },
+    "probes": {
+      "names": [
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "bun",
+        "deno",
+        "python",
+        "python3",
+        "pip",
+        "pip3",
+        "pipx",
+        "uv",
+        "ruby",
+        "gem",
+        "bundle",
+        "go",
+        "rustc",
+        "cargo",
+        "rustup",
+        "java",
+        "javac",
+        "kotlin",
+        "php",
+        "composer",
+        "perl",
+        "lua",
+        "swift",
+        "swiftc",
+        "clang",
+        "gcc",
+        "make",
+        "cmake",
+        "ninja",
+        "git",
+        "gh",
+        "hg",
+        "svn",
+        "docker",
+        "podman",
+        "kubectl",
+        "helm",
+        "terraform",
+        "tofu",
+        "ansible",
+        "vagrant",
+        "aws",
+        "gcloud",
+        "az",
+        "brew",
+        "mise",
+        "asdf",
+        "nix",
+        "port",
+        "task",
+        "just",
+        "psql",
+        "mysql",
+        "sqlite3",
+        "redis-cli",
+        "jq",
+        "rg",
+        "fd",
+        "fzf",
+        "direnv",
+        "tmux",
+        "nvim",
+        "vim",
+        "zsh",
+        "bash",
+        "fish"
+      ]
+    },
+    "managers": [
+      {
+        "id": "mise",
+        "binaries": [
+          "mise"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.local/share/mise"
+          },
+          {
+            "type": "literal",
+            "path": "~/.config/mise"
+          }
+        ],
+        "manages": [
+          "node",
+          "python",
+          "ruby",
+          "go",
+          "java",
+          "rust",
+          "erlang",
+          "elixir",
+          "php",
+          "deno",
+          "bun"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.local/share/mise/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "asdf",
+        "binaries": [
+          "asdf"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.asdf"
+          }
+        ],
+        "manages": [
+          "node",
+          "python",
+          "ruby",
+          "go",
+          "java",
+          "rust",
+          "erlang",
+          "elixir",
+          "php",
+          "deno",
+          "bun"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.asdf/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "nix",
+        "binaries": [
+          "nix"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "/nix"
+          }
+        ],
+        "manages": [
+          "node",
+          "python",
+          "ruby",
+          "go",
+          "java",
+          "rust",
+          "erlang",
+          "elixir",
+          "php",
+          "deno",
+          "bun"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "pyenv",
+        "binaries": [
+          "pyenv"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.pyenv"
+          }
+        ],
+        "manages": [
+          "python"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.pyenv/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "conda",
+        "binaries": [
+          "conda"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/miniconda3"
+          },
+          {
+            "type": "literal",
+            "path": "~/anaconda3"
+          },
+          {
+            "type": "literal",
+            "path": "~/miniforge3"
+          },
+          {
+            "type": "literal",
+            "path": "~/mambaforge"
+          },
+          {
+            "type": "literal",
+            "path": "/opt/homebrew/Caskroom/miniconda"
+          }
+        ],
+        "manages": [
+          "python"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "uv",
+        "binaries": [
+          "uv"
+        ],
+        "directories": [],
+        "manages": [
+          "python"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "rbenv",
+        "binaries": [
+          "rbenv"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.rbenv"
+          }
+        ],
+        "manages": [
+          "ruby"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.rbenv/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "nodenv",
+        "binaries": [
+          "nodenv"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.nodenv"
+          }
+        ],
+        "manages": [
+          "node"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.nodenv/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "fnm",
+        "binaries": [
+          "fnm"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.fnm"
+          }
+        ],
+        "manages": [
+          "node"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "volta",
+        "binaries": [
+          "volta"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.volta"
+          }
+        ],
+        "manages": [
+          "node"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "pnpm",
+        "binaries": [
+          "pnpm"
+        ],
+        "directories": [],
+        "manages": [
+          "node"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [
+          {
+            "type": "literal",
+            "path": "~/Library/pnpm/nodejs"
+          },
+          {
+            "type": "literal",
+            "path": "~/.local/share/pnpm/nodejs"
+          }
+        ],
+        "scanRoots": []
+      },
+      {
+        "id": "goenv",
+        "binaries": [
+          "goenv"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.goenv"
+          }
+        ],
+        "manages": [
+          "go"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.goenv/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "jenv",
+        "binaries": [
+          "jenv"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.jenv"
+          }
+        ],
+        "manages": [
+          "java"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": [
+          {
+            "source": {
+              "type": "literal",
+              "path": "~/.jenv/shims"
+            },
+            "kind": "shim"
+          }
+        ]
+      },
+      {
+        "id": "rustup",
+        "binaries": [
+          "rustup"
+        ],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.rustup"
+          }
+        ],
+        "manages": [
+          "rust"
+        ],
+        "shellFunction": false,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "nvm",
+        "binaries": [],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.nvm"
+          }
+        ],
+        "manages": [
+          "node"
+        ],
+        "shellFunction": true,
+        "roleEvidence": [],
+        "scanRoots": []
+      },
+      {
+        "id": "sdkman",
+        "binaries": [],
+        "directories": [
+          {
+            "type": "literal",
+            "path": "~/.sdkman"
+          }
+        ],
+        "manages": [
+          "java"
+        ],
+        "shellFunction": true,
+        "roleEvidence": [],
+        "scanRoots": []
+      }
+    ],
+    "origins": [
+      {
+        "origin": "foodtruck",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "environment",
+            "environment": "FOODTRUCK_TOOLBOX",
+            "fallback": "~/.local/share/foodtruck/toolbox/bin",
+            "suffix": "",
+            "separator": ":"
+          }
+        ],
+        "requires": []
+      },
+      {
+        "origin": "homebrew",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "literal",
+            "path": "/opt/homebrew"
+          },
+          {
+            "type": "literal",
+            "path": "/usr/local"
+          },
+          {
+            "type": "literal",
+            "path": "/home/linuxbrew/.linuxbrew"
+          }
+        ],
+        "requires": [
+          "Cellar",
+          "Library/Homebrew"
+        ]
+      },
+      {
+        "origin": "mise",
+        "match": "contains",
+        "patterns": [
+          "/mise/installs/",
+          "/mise/shims/"
+        ],
+        "paths": [],
+        "requires": []
+      },
+      {
+        "origin": "asdf",
+        "match": "contains",
+        "patterns": [
+          "/.asdf/"
+        ],
+        "paths": [],
+        "requires": []
+      },
+      {
+        "origin": "cargo",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "literal",
+            "path": "~/.cargo"
+          }
+        ],
+        "requires": []
+      },
+      {
+        "origin": "npm",
+        "match": "contains",
+        "patterns": [
+          "/lib/node_modules/"
+        ],
+        "paths": [],
+        "requires": []
+      },
+      {
+        "origin": "pipx",
+        "match": "contains",
+        "patterns": [
+          "/pipx/venvs/"
+        ],
+        "paths": [],
+        "requires": []
+      },
+      {
+        "origin": "gem",
+        "match": "contains",
+        "patterns": [
+          "/gems/"
+        ],
+        "paths": [],
+        "requires": []
+      },
+      {
+        "origin": "go",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "literal",
+            "path": "~/go/bin"
+          }
+        ],
+        "requires": []
+      },
+      {
+        "origin": "xcode",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "literal",
+            "path": "/Library/Developer/CommandLineTools"
+          },
+          {
+            "type": "literal",
+            "path": "/Applications/Xcode.app"
+          }
+        ],
+        "requires": []
+      },
+      {
+        "origin": "apple",
+        "match": "under",
+        "patterns": [],
+        "paths": [
+          {
+            "type": "literal",
+            "path": "/usr/bin"
+          },
+          {
+            "type": "literal",
+            "path": "/bin"
+          },
+          {
+            "type": "literal",
+            "path": "/usr/sbin"
+          },
+          {
+            "type": "literal",
+            "path": "/sbin"
+          },
+          {
+            "type": "literal",
+            "path": "/usr/libexec"
+          },
+          {
+            "type": "literal",
+            "path": "/System"
+          }
+        ],
+        "requires": []
+      }
+    ],
+    "gitCandidates": [
+      {
+        "type": "literal",
+        "path": "/opt/homebrew/bin/git"
+      },
+      {
+        "type": "literal",
+        "path": "/usr/local/bin/git"
+      },
+      {
+        "type": "literal",
+        "path": "/Library/Developer/CommandLineTools/usr/bin/git"
+      },
+      {
+        "type": "literal",
+        "path": "/Applications/Xcode.app/Contents/Developer/usr/bin/git"
+      }
+    ],
+    "reporting": [
+      {
+        "id": "probeRefused",
+        "severity": "notice",
+        "section": "history",
+        "cardinality": "once",
+        "title": "finding.inventory.probeRefused",
+        "fixable": false,
+        "remedy": "finding.inventory.probeRefused.remedy"
+      },
+      {
+        "id": "softwareDiscoveryRefused",
+        "severity": "notice",
+        "section": "history",
+        "cardinality": "once",
+        "title": "finding.inventory.software.discoveryRefused",
+        "remedy": "finding.inventory.software.discoveryRefused.remedy",
+        "fixable": false
+      },
+      {
+        "id": "snapshotUnreadable",
+        "severity": "notice",
+        "section": "history",
+        "cardinality": "once",
+        "title": "finding.inventory.snapshotUnreadable",
+        "fixable": false,
+        "remedy": "finding.inventory.snapshotUnreadable.remedy"
+      },
+      {
+        "id": "firstObservation",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.firstObservation",
+        "fixable": false
+      },
+      {
+        "id": "hostChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.host.changed",
+        "fixable": false
+      },
+      {
+        "id": "coverageAdded",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.coverage.added",
+        "fixable": false
+      },
+      {
+        "id": "coverageRemoved",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.coverage.removed",
+        "fixable": false
+      },
+      {
+        "id": "coverageReordered",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.coverage.reordered",
+        "fixable": false
+      },
+      {
+        "id": "softwareCoverageAdded",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.software.coverage.added",
+        "fixable": false
+      },
+      {
+        "id": "softwareCoverageRemoved",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.software.coverage.removed",
+        "fixable": false
+      },
+      {
+        "id": "managersChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "once",
+        "title": "finding.inventory.managers.changed",
+        "fixable": false
+      },
+      {
+        "id": "programAdded",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.added",
+        "fixable": false
+      },
+      {
+        "id": "programRemoved",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.removed",
+        "fixable": false
+      },
+      {
+        "id": "programVersionChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.versionChanged",
+        "fixable": false
+      },
+      {
+        "id": "programOriginChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.originChanged",
+        "fixable": false
+      },
+      {
+        "id": "programTargetChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.targetChanged",
+        "fixable": false
+      },
+      {
+        "id": "programKindChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.kindChanged",
+        "fixable": false
+      },
+      {
+        "id": "programReplaced",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.program.replaced",
+        "fixable": false
+      },
+      {
+        "id": "softwareAdded",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.software.added",
+        "fixable": false
+      },
+      {
+        "id": "softwareRemoved",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.software.removed",
+        "fixable": false
+      },
+      {
+        "id": "softwareChanged",
+        "severity": "notice",
+        "section": "change",
+        "cardinality": "perItem",
+        "title": "finding.inventory.software.changed",
+        "fixable": false
+      },
+      {
+        "id": "versionConflict",
+        "severity": "drift",
+        "section": "attention",
+        "cardinality": "perItem",
+        "title": "finding.inventory.versionConflict",
+        "fixable": false,
+        "remedy": "finding.inventory.versionConflict.remedy"
+      },
+      {
+        "id": "duplicated",
+        "severity": "notice",
+        "section": "observation",
+        "cardinality": "once",
+        "title": "finding.inventory.duplicated",
+        "fixable": false,
+        "remedy": "finding.inventory.duplicated.remedy"
+      },
+      {
+        "id": "shimShadowed",
+        "severity": "drift",
+        "section": "attention",
+        "cardinality": "perItem",
+        "title": "finding.inventory.shimShadowed",
+        "fixable": false,
+        "remedy": "finding.inventory.shimShadowed.remedy"
+      },
+      {
+        "id": "contested",
+        "severity": "drift",
+        "section": "attention",
+        "cardinality": "perItem",
+        "title": "finding.inventory.contested",
+        "fixable": false,
+        "remedy": "finding.inventory.contested.remedy"
+      },
+      {
+        "id": "unmanaged",
+        "severity": "notice",
+        "section": "observation",
+        "cardinality": "perItem",
+        "title": "finding.inventory.unmanaged",
+        "fixable": false,
+        "remedy": "finding.inventory.unmanaged.remedy"
+      },
+      {
+        "id": "noGit",
+        "severity": "notice",
+        "section": "history",
+        "cardinality": "once",
+        "title": "finding.inventory.nogit",
+        "fixable": false,
+        "remedy": "finding.inventory.nogit.remedy"
+      },
+      {
+        "id": "historyFailed",
+        "severity": "notice",
+        "section": "history",
+        "cardinality": "once",
+        "title": "finding.inventory.historyFailed",
+        "fixable": false,
+        "remedy": "finding.inventory.historyFailed.remedy"
+      }
+    ]
+  }
+}

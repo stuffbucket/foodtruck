@@ -15,9 +15,29 @@ public protocol BuiltinRecipe: Sendable {
     var descriptor: Recipe { get }
     /// Read-only. Must not touch anything outside `context.locations`.
     func audit(_ context: RunContext) async -> RecipeReport
+    /// The default carries only a report. Inventory overrides this to attach the
+    /// exact scan the GUI may record after presenting the read-only result.
+    func auditCapture(_ context: RunContext) async -> BuiltinAudit
     /// Idempotent. Called only when audit reported drift, but must still be
     /// safe if it is not.
     func converge(_ context: RunContext) async -> Result<RecipeReport, RecipeFault>
+}
+
+
+public struct BuiltinAudit: Sendable {
+    var report: RecipeReport
+    var inventory: Inventory?
+
+    init(report: RecipeReport, inventory: Inventory? = nil) {
+        self.report = report
+        self.inventory = inventory
+    }
+}
+
+extension BuiltinRecipe {
+    func auditCapture(_ context: RunContext) async -> BuiltinAudit {
+        BuiltinAudit(report: await audit(context))
+    }
 }
 
 public struct BuiltinEngine: RecipeEngine {
@@ -29,7 +49,7 @@ public struct BuiltinEngine: RecipeEngine {
     }
 
     public static var standard: [BuiltinRecipe] {
-        [WorkspaceRecipe(), CookbookRecipe(), ToolboxRecipe(), InventoryRecipe()]
+        [WorkspaceRecipe(), SettingsRecipe(), CookbookRecipe(), ToolboxRecipe(), InventoryRecipe()]
     }
     public var descriptors: [Recipe] { recipes.values.map(\.descriptor).sorted { $0.id < $1.id } }
 
@@ -37,20 +57,36 @@ public struct BuiltinEngine: RecipeEngine {
 
     public func run(_ verb: Verb, recipe: Recipe, context: RunContext) async -> VerbResult {
         let started = Date()
+        if recipe.id == "env.inventory", context.profile == nil {
+            return VerbResult(recipe: recipe.id, verb: verb, outcome: .failed(
+                RecipeFault(
+                    kind: .settingsUnavailable, recipe: recipe.id, verb: verb,
+                    args: ["path": context.locations.settings.path],
+                    detail: "env.inventory requires a resolved settings profile")))
+        }
         guard let impl = recipes[recipe.id] else {
             return VerbResult(recipe: recipe.id, verb: verb, outcome: .failed(
                 RecipeFault(kind: .recipeMissing, recipe: recipe.id, verb: verb)))
         }
-        func done(_ o: VerbOutcome, _ r: RecipeReport) -> VerbResult {
-            VerbResult(recipe: recipe.id, verb: verb, outcome: o, report: r,
-                       duration: Date().timeIntervalSince(started))
+        func done(_ o: VerbOutcome, _ capture: BuiltinAudit) -> VerbResult {
+            VerbResult(recipe: recipe.id, verb: verb, outcome: o,
+                       report: capture.report,
+                       duration: Date().timeIntervalSince(started),
+                       inventory: capture.inventory)
+        }
+        func done(_ o: VerbOutcome, _ report: RecipeReport) -> VerbResult {
+            done(o, BuiltinAudit(report: report))
         }
 
         switch verb {
         case .detect:
             return done(.converged, await impl.audit(context))
 
-        case .audit, .verify:
+        case .audit:
+            let capture = await impl.auditCapture(context)
+            return done(capture.report.requiresAction ? .drift : .converged, capture)
+
+        case .verify:
             let report = await impl.audit(context)
             return done(report.requiresAction ? .drift : .converged, report)
 

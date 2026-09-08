@@ -43,6 +43,7 @@ public enum RecipeScope: String, Codable, Sendable {
 public struct Recipe: Codable, Sendable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, summary, engine, requires, provides, verbs, blast, scope, timeout, symbol
+        case convergeLabel, convergeHelp
     }
 
     public var id: String
@@ -71,6 +72,10 @@ public struct Recipe: Codable, Sendable, Identifiable, Equatable {
     public var timeout: Double
     /// SF Symbol name for the UI. Purely presentational.
     public var symbol: String
+    /// What the recipe's converge operation actually does. These are optional so
+    /// older and third-party recipes keep their generic action wording.
+    public var convergeLabel: String?
+    public var convergeHelp: String?
 
     public init(
         id: String,
@@ -84,7 +89,9 @@ public struct Recipe: Codable, Sendable, Identifiable, Equatable {
         scope: RecipeScope = .environment,
         customised: Bool = false,
         timeout: Double = 120,
-        symbol: String = "shippingbox"
+        symbol: String = "shippingbox",
+        convergeLabel: String? = nil,
+        convergeHelp: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -98,6 +105,8 @@ public struct Recipe: Codable, Sendable, Identifiable, Equatable {
         self.customised = customised
         self.timeout = timeout
         self.symbol = symbol
+        self.convergeLabel = convergeLabel
+        self.convergeHelp = convergeHelp
     }
 
     /// Decoded by hand, for two reasons worth stating.
@@ -122,6 +131,8 @@ public struct Recipe: Codable, Sendable, Identifiable, Equatable {
         scope = try c.decodeIfPresent(RecipeScope.self, forKey: .scope) ?? .environment
         timeout = try c.decodeIfPresent(Double.self, forKey: .timeout) ?? 120
         symbol = try c.decodeIfPresent(String.self, forKey: .symbol) ?? "shippingbox"
+        convergeLabel = try c.decodeIfPresent(String.self, forKey: .convergeLabel)
+        convergeHelp = try c.decodeIfPresent(String.self, forKey: .convergeHelp)
         customised = false
     }
 }

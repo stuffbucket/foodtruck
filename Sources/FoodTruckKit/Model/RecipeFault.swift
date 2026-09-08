@@ -16,6 +16,13 @@ public struct RecipeFault: Codable, Sendable, Equatable, Error {
         case recipeMissing
         /// The recipe's metadata does not parse.
         case recipeMalformed
+        /// The signed settings defaults are unavailable, or the installed copy
+        /// disappeared while housekeeping was settling it.
+        case settingsUnavailable
+        /// The user's settings exist but do not satisfy the settings schema.
+        case settingsInvalid
+        /// Runtime roots or environment-derived paths cannot be resolved safely.
+        case runtimeEnvironmentInvalid
         /// The recipe does not implement a verb we asked for.
         case verbUnsupported
         /// The engine this recipe needs (e.g. `task`) is not unlocked yet.

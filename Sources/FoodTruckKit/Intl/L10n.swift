@@ -51,23 +51,31 @@ public final class L10n: @unchecked Sendable {
     }
 
     private static func load(_ code: String, bundle: Bundle?) -> [String: String] {
-        let candidates = [bundle, Bundle.main, Bundle.moduleIfPresent].compactMap { $0 }
-        for b in candidates {
+        func table(in bundle: Bundle) -> [String: String]? {
             // Three layouts, because the same source tree is built three ways:
             // SwiftPM resource bundle, a real .app bundle, and plain swiftc.
-            let url = b.url(forResource: "Localizable", withExtension: "strings",
-                            subdirectory: "Resources/\(code).lproj")
-                ?? b.url(forResource: "Localizable", withExtension: "strings",
-                         subdirectory: "\(code).lproj")
-                ?? b.url(forResource: "Localizable", withExtension: "strings",
-                         subdirectory: nil, localization: code)
-            guard let url else { continue }
-            if let d = try? Data(contentsOf: url),
-               let plist = try? PropertyListSerialization.propertyList(
-                    from: d, format: nil) as? [String: String] {
-                return plist
-            }
+            let url = bundle.url(forResource: "Localizable", withExtension: "strings",
+                                 subdirectory: "Resources/\(code).lproj")
+                ?? bundle.url(forResource: "Localizable", withExtension: "strings",
+                              subdirectory: "\(code).lproj")
+                ?? bundle.url(forResource: "Localizable", withExtension: "strings",
+                              subdirectory: nil, localization: code)
+            guard let url, let data = try? Data(contentsOf: url) else { return nil }
+            return try? PropertyListSerialization.propertyList(
+                from: data, format: nil) as? [String: String]
         }
+
+        if let bundle, let table = table(in: bundle) { return table }
+        if let table = table(in: Bundle.main) { return table }
+
+        #if SWIFT_PACKAGE
+        // SwiftPM's generated accessor traps when its bundle is absent. A real
+        // app carries localisations in Bundle.main, so never ask SwiftPM to
+        // rescue a malformed app; preserve the visible missing-key fallback.
+        if Bundle.main.bundleURL.pathExtension != "app",
+           let table = table(in: Bundle.module) { return table }
+        #endif
+
         return [:]
     }
 
@@ -159,17 +167,4 @@ public func t(_ key: String, _ args: [String: String] = [:]) -> String {
 /// Shorthand for a string whose wording depends on a count.
 public func tn(_ key: String, _ count: Int, _ args: [String: String] = [:]) -> String {
     L10n.shared.plural(key, count, args)
-}
-
-private extension Bundle {
-    /// `Bundle.module` only exists when SwiftPM generated resources for the
-    /// target; referencing it unconditionally breaks the plain-`swiftc` build
-    /// the release producer uses.
-    static var moduleIfPresent: Bundle? {
-        #if SWIFT_PACKAGE
-        return Bundle.module
-        #else
-        return nil
-        #endif
-    }
 }

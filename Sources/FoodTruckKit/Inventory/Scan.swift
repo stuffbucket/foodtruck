@@ -1,58 +1,99 @@
+import Darwin
 import Foundation
+
+/// Canonical filesystem roots authorized by one resolved settings profile.
+/// Home and the system root are separate trust domains: either may be a sibling
+/// of the other in a sealed run, and symlinks may not escape either domain.
+struct InventoryBoundary: Sendable {
+    private let roots: Set<String>
+
+    init(home: URL? = nil, systemRoot: URL) {
+        let urls = [home, systemRoot].compactMap { $0 }
+        roots = Set(urls.compactMap { try? CanonicalPath.resolve($0).path })
+    }
+
+    func contains(_ url: URL) -> Bool {
+        guard let path = try? CanonicalPath.resolve(url).path else { return false }
+        return containsCanonical(path)
+    }
+
+    func containsCanonical(_ path: String) -> Bool {
+        roots.contains { root in
+            root == "/" ? path.hasPrefix("/")
+                : path == root || path.hasPrefix(root + "/")
+        }
+    }
+}
 
 extension Inventory {
 
     /// Look at the machine and describe it, without running any of it.
-    ///
-    /// This half is directory reads, `lstat` and two plists -- nothing here
-    /// executes anything, because the alternative is running a few thousand
-    /// unknown binaries to find out what they are. The versions this can
-    /// produce are therefore inferred from install layouts, and marked as such.
-    ///
-    /// Asking the programs themselves is a second, deliberately narrow pass:
-    /// see `probingVersions`.
+    /// Policy is supplied by a resolved settings profile; the code here retains
+    /// only the boundaries that must not be configurable.
     public static func scan(
         home: URL,
         locations: Locations,
-        systemRoot: URL = URL(filePath: "/"),
+        settings: ResolvedInventorySettings,
+        systemRoot: URL,
         roots explicitRoots: [URL]? = nil
     ) -> Inventory {
-        let searched = explicitRoots ?? Self.roots(
-            home: home, locations: locations, systemRoot: systemRoot)
-        let homePath = home.standardizedFileURL.path
         let toolbox = locations.toolbox.standardizedFileURL.path
-        let brewPrefixes = homebrewPrefixes(systemRoot: systemRoot)
+        let resolvedToolbox = (try? CanonicalPath.resolve(locations.toolbox).path)
+            ?? locations.toolbox.standardizedFileURL.path
+        let configuredRoots = explicitRoots ?? Self.roots(
+            home: home, settings: settings, systemRoot: systemRoot)
+        let shimRoots = declaredShimRoots(settings: settings)
+        let matchers = originMatchers(
+            home: home, settings: settings, systemRoot: systemRoot)
+        let boundary = InventoryBoundary(home: home, systemRoot: systemRoot)
+
+        // Canonicalize before enumerating. In a sealed scan, a lexical child can
+        // itself be a symlink to the host filesystem; rejecting that resolved
+        // path is what makes systemRoot a boundary rather than a spelling rule.
+        // Production uses `/`, where ordinary symlinked PATH entries remain valid.
+        var seenRoots: Set<String> = []
+        let searched: [(url: URL, shimOrigin: Origin?)] = configuredRoots.compactMap { root in
+            let standardized = root.standardizedFileURL
+            guard let resolvedURL = try? CanonicalPath.resolve(standardized) else { return nil }
+            let resolved = resolvedURL.path
+            guard !isUnder(standardized.path, root: toolbox),
+                  !isUnder(resolved, root: resolvedToolbox),
+                  boundary.containsCanonical(resolved),
+                  seenRoots.insert(resolved).inserted else { return nil }
+            return (resolvedURL, shimRoots[standardized.path] ?? shimRoots[resolved])
+        }
+        let homePath = (try? CanonicalPath.resolve(home).path)
+            ?? home.standardizedFileURL.path
 
         var tools: [Installed] = []
+        var scanned: [URL] = []
         for root in searched {
-            for program in programs(in: root) {
-                // `attributesOfItem` does not follow the link, so this asks
-                // "is this entry a symlink" rather than "does resolving it
-                // change the string" -- which would answer yes for every file
-                // under a temp directory, where `/var` is itself a link.
+            guard let programs = programs(in: root.url) else { continue }
+            scanned.append(root.url)
+            for program in programs {
+                guard let resolvedProgram = try? CanonicalPath.resolve(program).path else {
+                    continue
+                }
+                guard !isUnder(resolvedProgram, root: resolvedToolbox),
+                      boundary.containsCanonical(resolvedProgram)
+                else { continue }
+
+                // `attributesOfItem` does not follow the link, so this asks if
+                // the directory entry is a symlink rather than whether resolving
+                // its parents changes the spelling of the path.
                 let attributes = try? FileManager.default.attributesOfItem(atPath: program.path)
                 let isLink = (attributes?[.type] as? FileAttributeType) == .typeSymbolicLink
-                let real = isLink ? program.resolvingSymlinksInPath().path : nil
-                // Every manager that works this way uses the same word for the
-                // directory, which is what makes one test cover mise, asdf,
-                // pyenv and rbenv alike.
-                let isShim = program.path.contains("/shims/")
-                // A shim's link is followed at your peril. `mise/shims/node`
-                // points at the mise binary, which is itself a Cellar symlink,
-                // so resolving the chain lands on `Cellar/mise/2026.8.8/` --
-                // and reading that back gives Homebrew as the installer of
-                // `node` and mise's version as the version of `node`. Both
-                // wrong, and wrong in the confident way. A shim is described by
-                // where it sits and nothing else.
-                let origin = isShim
-                    ? origin(of: program.path, real: nil, home: homePath,
-                             toolbox: toolbox, brewPrefixes: brewPrefixes)
-                    : origin(of: program.path, real: real, home: homePath,
-                             toolbox: toolbox, brewPrefixes: brewPrefixes)
-                // Nil for a shim, and not by omission: a shim has no version of
-                // its own, and the only path leading away from it describes the
-                // manager instead.
-                let inferred = isShim ? nil : version(from: real ?? program.path)
+                let real = isLink ? (try? CanonicalPath.resolve(program).path) : nil
+
+                // A shim's target describes its manager, not the tool represented
+                // by the shim. The root is classified by explicit scan metadata,
+                // rather than treating any path containing `/shims/` as trusted.
+                let origin = root.shimOrigin
+                    ?? origin(of: program.path, real: root.shimOrigin == nil ? real : nil,
+                              toolbox: toolbox, matchers: matchers)
+                guard origin != .foodtruck else { continue }
+
+                let inferred = root.shimOrigin == nil ? version(from: real ?? program.path) : nil
                 tools.append(Installed(
                     name: program.lastPathComponent,
                     path: abbreviate(program.path, home: homePath),
@@ -60,101 +101,91 @@ extension Inventory {
                     origin: origin,
                     version: inferred,
                     versionSource: inferred == nil ? nil : .inferred,
-                    shim: isShim,
+                    shim: root.shimOrigin != nil,
                     stamp: stamp(of: real ?? program.path)))
             }
         }
-        // Sorted so that two snapshots of an unchanged machine are byte
-        // identical, which is what makes a diff mean something.
         tools.sort { ($0.name, $0.path) < ($1.name, $1.path) }
 
-        // Built first, then asked about itself: detecting managers needs both
-        // the tools and the roots they were found under, and taking a struct
-        // apart to pass its own two fields back in is how those two came to
-        // disagree in the first place.
         var inventory = Inventory(
             host: host(systemRoot: systemRoot),
-            roots: searched.map { abbreviate($0.path, home: homePath) },
+            roots: scanned.map { abbreviate($0.path, home: homePath) },
             tools: tools)
-        inventory.managers = inventory.detectedManagers(home: home, systemRoot: systemRoot)
+        inventory.managers = inventory.detectedManagers(
+            home: home, settings: settings, systemRoot: systemRoot)
+        let discovery = discoverSoftware(
+            home: home, settings: settings, systemRoot: systemRoot)
+        inventory.software = discovery.artifacts
+        inventory.softwareRoots = discovery.roots
+        inventory.softwareDiscoveryRefused = discovery.refused
         return inventory
     }
 
     // MARK: - Where to look
 
-    /// The directories FoodTruck searches.
-    ///
-    /// Deliberately a declared list rather than `$PATH`. An app launched from
-    /// Finder does not inherit the shell's `PATH` -- the same fact `Exec` is
-    /// built around -- so scanning `$PATH` would make the inventory depend on
-    /// how FoodTruck happened to be started, and every one of those differences
-    /// would land in the history as a change that never happened.
-    ///
-    /// The system's own answer comes from `/etc/paths` and `/etc/paths.d`, read
-    /// directly rather than by running `path_helper`. Then the per-manager
-    /// directories, which is where anything interesting actually lives. A
-    /// directory a shell rc invented is not searched, and is not claimed to be:
-    /// `roots` travels in the snapshot for exactly that reason.
-    public static func roots(home: URL, locations: Locations, systemRoot: URL) -> [URL] {
-        var out: [URL] = []
-        var seen: Set<String> = []
+    /// Resolve the ordered scan declarations and direct sources supplied by the
+    /// settings profile. Declaration files contain one root per line; declaration
+    /// directories are read in filename order.
+    public static func roots(home: URL, settings: ResolvedInventorySettings,
+                             systemRoot: URL) -> [URL] {
         let fm = FileManager.default
+        var candidates: [URL] = []
 
-        func add(_ url: URL) {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue
-            else { return }
-            let path = url.standardizedFileURL.path
-            if seen.insert(path).inserted { out.append(URL(filePath: path)) }
+        func rootsDeclared(in file: URL) -> [URL] {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+            return text.split(separator: "\n").compactMap { line in
+                let path = line.trimmingCharacters(in: .whitespaces)
+                guard !path.isEmpty else { return nil }
+                if path == "~" { return home.standardizedFileURL }
+                if path.hasPrefix("~/") {
+                    return home.appending(path: String(path.dropFirst(2))).standardizedFileURL
+                }
+                guard path.hasPrefix("/") else { return nil }
+                if path == "/" { return systemRoot.standardizedFileURL }
+                return systemRoot.appending(path: String(path.dropFirst())).standardizedFileURL
+            }
         }
 
-        let etc = systemRoot.appending(path: "etc")
-        var declared: [String] = []
-        if let text = try? String(contentsOf: etc.appending(path: "paths"), encoding: .utf8) {
-            declared += text.split(separator: "\n").map(String.init)
-        }
-        if let files = try? fm.contentsOfDirectory(
-            at: etc.appending(path: "paths.d"), includingPropertiesForKeys: nil) {
-            for file in files.sorted(by: { $0.path < $1.path }) {
-                if let text = try? String(contentsOf: file, encoding: .utf8) {
-                    declared += text.split(separator: "\n").map(String.init)
+        for declaration in settings.scanDeclarations {
+            switch declaration.type {
+            case .file:
+                candidates += rootsDeclared(in: declaration.url)
+            case .directory:
+                guard let files = try? fm.contentsOfDirectory(
+                    at: declaration.url, includingPropertiesForKeys: nil) else { continue }
+                for file in files.sorted(by: { $0.path < $1.path }) {
+                    candidates += rootsDeclared(in: file)
                 }
             }
         }
-        for entry in declared {
-            let trimmed = entry.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            add(trimmed.hasPrefix("/")
-                ? systemRoot.appending(path: String(trimmed.dropFirst()))
-                : URL(filePath: trimmed))
+        candidates += settings.scanSources
+        candidates += settings.managers.flatMap { manager in
+            manager.scanRoots.map(\.url)
         }
 
-        for path in ["opt/homebrew/bin", "opt/homebrew/sbin",
-                     "usr/local/bin", "usr/local/sbin"] {
-            add(systemRoot.appending(path: path))
+        var roots: [URL] = []
+        var seen: Set<String> = []
+        for candidate in candidates {
+            let standardized = candidate.standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  seen.insert(standardized.path).inserted else { continue }
+            roots.append(standardized)
         }
-        for path in [".local/bin", ".local/share/mise/shims", ".asdf/shims",
-                     ".cargo/bin", "go/bin", ".bun/bin", ".deno/bin"] {
-            add(home.appending(path: path))
-        }
-        add(locations.toolbox)
-        return out
+        return roots
     }
 
-    /// Executable regular files in one directory.
-    ///
-    /// Directories are excluded explicitly: `isExecutableFile` is true for any
-    /// directory you have search permission on, so trusting it alone would file
-    /// every subfolder of `/usr/local/bin` as an installed program.
-    static func programs(in root: URL) -> [URL] {
+    /// Executable regular files in one directory. Nil distinguishes a failed
+    /// directory read from a successfully read empty directory.
+    static func programs(in root: URL) -> [URL]? {
         let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: root.path) else { return [] }
+        guard let names = try? fm.contentsOfDirectory(atPath: root.path) else { return nil }
         return names.sorted().compactMap { name in
             let url = root.appending(path: name)
-            var isDir: ObjCBool = false
-            // Follows symlinks, so a dangling link is absent rather than a
-            // program that cannot be run.
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue,
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue,
                   fm.isExecutableFile(atPath: url.path) else { return nil }
             return url
         }
@@ -162,124 +193,154 @@ extension Inventory {
 
     // MARK: - Attribution
 
-    /// Which channel installed this, judged by where it lands.
-    ///
-    /// Both the directory entry and what it resolves to get a vote, because the
-    /// two managers in play here hide the evidence in opposite places. Homebrew
-    /// puts a symlink in `bin` pointing into a Cellar, so only the *resolved*
-    /// path names it. mise puts a shim in its own directory pointing at the mise
-    /// binary, so only the *entry* path names it -- following the link there
-    /// leads to `mise` itself and loses the tool entirely.
-    ///
-    /// The resolved path is asked first and only overruled when it has nothing
-    /// to say. That ordering is what keeps `/opt/homebrew/bin` honest: a symlink
-    /// into a Cellar is Homebrew's, and a real binary somebody copied in beside
-    /// it belongs to nobody -- which is exactly the thing worth reporting, and
-    /// what `brew doctor` would say about it too.
-    static func origin(of path: String, real: String?, home: String,
-                       toolbox: String, brewPrefixes: [String] = []) -> Origin {
+    private struct ResolvedOriginMatcher {
+        let origin: Origin
+        let match: OriginMatch
+        let patterns: [String]
+        let roots: [String]
+    }
+
+    /// Compile ordered settings rules once for a scan. Homebrew roots retain a
+    /// non-configurable proof requirement: a prefix is not Homebrew merely
+    /// because a user placed its path in settings.
+    private static func originMatchers(
+        home: URL, settings: ResolvedInventorySettings, systemRoot: URL
+    ) -> [ResolvedOriginMatcher] {
+        let fm = FileManager.default
+        let boundary = InventoryBoundary(home: home, systemRoot: systemRoot)
+        return settings.origins.compactMap { rule in
+            // These are boundaries, not policy. FoodTruck is established from
+            // Locations and unmanaged is the result of no rule matching.
+            guard rule.origin != .foodtruck, rule.origin != .unmanaged else { return nil }
+            let required = rule.origin == .homebrew && rule.match == .under
+                ? Array(Set(rule.requires + ["Cellar", "Library/Homebrew"]))
+                : rule.requires
+            let roots = rule.paths.compactMap { url -> String? in
+                guard let canonical = try? CanonicalPath.resolve(url) else { return nil }
+                let root = canonical.path
+                guard boundary.containsCanonical(root),
+                      required.allSatisfy({ marker in
+                          var isDirectory: ObjCBool = false
+                          return fm.fileExists(
+                              atPath: canonical.appending(path: marker).path,
+                              isDirectory: &isDirectory) && isDirectory.boolValue
+                      }) else { return nil }
+                return root
+            }
+            return ResolvedOriginMatcher(
+                origin: rule.origin, match: rule.match,
+                patterns: rule.patterns, roots: roots)
+        }
+    }
+
+    /// Which channel installed this, checking the resolved target first because
+    /// link-based package managers leave their evidence there.
+    private static func origin(of path: String, real: String?, toolbox: String,
+                               matchers: [ResolvedOriginMatcher]) -> Origin {
         if let real {
-            let resolved = classify(real, home: home, toolbox: toolbox,
-                                    brewPrefixes: brewPrefixes)
+            let resolved = classify(real, toolbox: toolbox, matchers: matchers)
             if resolved != .unmanaged { return resolved }
         }
-        return classify(path, home: home, toolbox: toolbox, brewPrefixes: brewPrefixes)
+        return classify(path, toolbox: toolbox, matchers: matchers)
     }
 
-    /// Directories that are demonstrably a Homebrew installation, established by
-    /// looking for the two things one always has rather than by recognising a
-    /// path name.
-    ///
-    /// This matters because the two layouts disagree about where `brew` itself
-    /// lives. On Intel the prefix is `/usr/local` and the checkout is
-    /// `/usr/local/Homebrew`, so `brew` is a symlink between them. On Apple
-    /// silicon the prefix *is* the checkout, so `brew` is a plain file sitting
-    /// in `/opt/homebrew/bin` -- indistinguishable, by shape alone, from
-    /// something a person copied there.
-    ///
-    /// The cost of this is real and worth stating: a file somebody did copy
-    /// into `<prefix>/bin` is now attributed to Homebrew rather than reported
-    /// as unmanaged. Telling those apart properly means asking the checkout --
-    /// `git -C <prefix> ls-files` -- which is what `brew doctor` does for its
-    /// "unbrewed files" check, and is the better answer once there is a
-    /// Homebrew recipe to put it in. Until then this errs towards not making a
-    /// false accusation about a tool the user certainly did not install by hand.
-    static func homebrewPrefixes(systemRoot: URL) -> [String] {
-        let fm = FileManager.default
-        return ["opt/homebrew", "usr/local", "home/linuxbrew/.linuxbrew"].compactMap { relative in
-            let prefix = systemRoot.appending(path: relative)
-            for marker in ["Cellar", "Library/Homebrew"] {
-                var isDir: ObjCBool = false
-                guard fm.fileExists(atPath: prefix.appending(path: marker).path,
-                                    isDirectory: &isDir), isDir.boolValue else { return nil }
+    private static func classify(_ path: String, toolbox: String,
+                                 matchers: [ResolvedOriginMatcher]) -> Origin {
+        if isUnder(path, root: toolbox) { return .foodtruck }
+        for matcher in matchers {
+            switch matcher.match {
+            case .contains:
+                if matcher.patterns.contains(where: { path.contains($0) }) {
+                    return matcher.origin
+                }
+            case .under:
+                if matcher.roots.contains(where: { isUnder(path, root: $0) }) {
+                    return matcher.origin
+                }
             }
-            return prefix.standardizedFileURL.path
         }
-    }
-
-    private static func classify(_ p: String, home: String, toolbox: String,
-                                 brewPrefixes: [String]) -> Origin {
-        func under(_ prefix: String) -> Bool {
-            p.hasPrefix(prefix.hasSuffix("/") ? prefix : prefix + "/")
-        }
-
-        if under(toolbox) { return .foodtruck }
-        // Never a bare `/homebrew/` match: `/opt/homebrew/bin` is a directory
-        // anyone can drop a file into, and crediting Homebrew for that would
-        // hide the one install nobody is looking after.
-        if p.contains("/Cellar/") { return .homebrew }
-        for prefix in brewPrefixes where under(prefix) { return .homebrew }
-        if p.contains("/mise/installs/") || p.contains("/mise/shims/") { return .mise }
-        if p.contains("/.asdf/") { return .asdf }
-        if under(home + "/.cargo") { return .cargo }
-        if p.contains("/lib/node_modules/") { return .npm }
-        if p.contains("/pipx/venvs/") { return .pipx }
-        if p.contains("/gems/") { return .gem }
-        if under(home + "/go/bin") { return .go }
-        if under("/Library/Developer/CommandLineTools") { return .xcode }
-        if under("/Applications/Xcode.app") { return .xcode }
-        // `/System` covers the cryptexes, where macOS now keeps things like
-        // safaridriver that used to sit in /usr/bin.
-        for system in ["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/libexec", "/System"]
-        where under(system) { return .apple }
         return .unmanaged
     }
 
-    /// The version a package manager already wrote into the path it installed
-    /// to. Nil when the layout does not say, which is the honest answer for
-    /// anything installed by hand.
-    ///
-    /// This is a convention, not a fact, which is why what it produces is
-    /// recorded as `.inferred` and why a probe overrules it.
+    /// Exact-or-descendant matching, so `/opt/homebrew-old` is not considered
+    /// beneath `/opt/homebrew`.
+    static func isUnder(_ path: String, root: String) -> Bool {
+        var root = root
+        while root.count > 1, root.hasSuffix("/") { root.removeLast() }
+        if root == "/" { return path.hasPrefix("/") }
+        return path == root || path.hasPrefix(root + "/")
+    }
+
+    /// Shims are an explicit property of a scan source or manager scan root,
+    /// not of an arbitrary path containing a directory with that name. PathSource
+    /// has already resolved relocated homes before this point.
+    private static func declaredShimRoots(
+        settings: ResolvedInventorySettings
+    ) -> [String: Origin] {
+        var roots: [String: Origin] = [:]
+
+        func record(_ root: URL, as origin: Origin) {
+            let standardized = root.standardizedFileURL
+            roots[standardized.path] = origin
+            if let canonical = try? CanonicalPath.resolve(standardized).path {
+                roots[canonical] = origin
+            }
+        }
+
+        // A scan source may declare safety independently of manager reporting.
+        // Its origin remains unknown unless a manager declaration claims the
+        // same root below.
+        for root in settings.scanRoots where root.kind == .shim {
+            record(root.url, as: .unmanaged)
+        }
+        for manager in settings.managers {
+            for root in manager.scanRoots where root.kind == .shim {
+                record(root.url, as: Origin(rawValue: manager.id))
+            }
+        }
+        return roots
+    }
+
+    /// Infer a version only from install-layout components with a numeric value.
     static func version(from path: String) -> String? {
         let parts = path.split(separator: "/").map(String.init)
         for marker in ["Cellar", "installs"] {
-            guard let i = parts.firstIndex(of: marker), i + 2 < parts.count else { continue }
-            let candidate = parts[i + 2]
-            // Guard against reading a directory name that merely sits in the
-            // right position. A version starts with a digit.
+            guard let index = parts.firstIndex(of: marker), index + 2 < parts.count else { continue }
+            let candidate = parts[index + 2]
             if let first = candidate.first, first.isNumber { return candidate }
         }
         return nil
     }
 
-    /// Size and modification time of a file, as `<bytes>:<epoch>`.
-    ///
-    /// Enough to say "this is the same binary I looked at last time" without
-    /// hashing a few hundred megabytes, and enough to say "this one changed"
-    /// for a program that carries no version anywhere.
     static func stamp(of path: String) -> String? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = attributes[.size] as? Int,
-              let modified = attributes[.modificationDate] as? Date else { return nil }
-        return "\(size):\(Int(modified.timeIntervalSince1970))"
+        guard let target = try? CanonicalPath.resolve(URL(filePath: path)).path else {
+            return nil
+        }
+        var metadata = Darwin.stat()
+        guard Darwin.lstat(target, &metadata) == 0 else { return nil }
+
+        // File identity catches atomic replacement; nanosecond mtime and ctime
+        // catch in-place rewrites even when size and whole-second mtime survive.
+        // The canonical target also invalidates the cache when a symlink retargets.
+        return [
+            "v3", target,
+            String(metadata.st_dev), String(metadata.st_ino), String(metadata.st_size),
+            String(metadata.st_mtimespec.tv_sec), String(metadata.st_mtimespec.tv_nsec),
+            String(metadata.st_ctimespec.tv_sec), String(metadata.st_ctimespec.tv_nsec),
+        ].joined(separator: ":")
     }
 
-    /// `$HOME` written as `~`, so a snapshot carries no username and two Macs
-    /// belonging to the same person produce comparable records.
     static func abbreviate(_ path: String, home: String) -> String {
-        guard !home.isEmpty, path == home || path.hasPrefix(home + "/") else { return path }
-        return "~" + path.dropFirst(home.count)
+        guard !home.isEmpty else { return path }
+        let canonicalHome = (try? CanonicalPath.resolve(URL(filePath: home)).path) ?? home
+        let canonicalPath = path.hasPrefix("/")
+            ? ((try? CanonicalPath.resolve(URL(filePath: path)).path) ?? path)
+            : path
+        guard canonicalPath == canonicalHome
+                || canonicalPath.hasPrefix(canonicalHome + "/") else {
+            return canonicalPath
+        }
+        return "~" + canonicalPath.dropFirst(canonicalHome.count)
     }
 
     // MARK: - The machine
@@ -306,12 +367,10 @@ extension Inventory {
     private static func dictionary(at url: URL) -> [String: String] {
         guard let data = try? Data(contentsOf: url),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
-              let dict = plist as? [String: Any] else { return [:] }
-        return dict.compactMapValues { $0 as? String }
+              let dictionary = plist as? [String: Any] else { return [:] }
+        return dictionary.compactMapValues { $0 as? String }
     }
 
-    /// `utsname` fields are fixed-size C char tuples; this is the standard way
-    /// to read one back as a String without guessing at its length.
     private static func string<T>(from field: inout T) -> String {
         withUnsafePointer(to: &field) {
             $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) {

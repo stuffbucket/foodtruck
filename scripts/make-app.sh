@@ -11,6 +11,7 @@ set -euo pipefail
 
 TAG="${TAG:-v0.0.0-local}"
 CONFIG="${CONFIG:-release}"
+SCRATCH_PATH="${SCRATCH_PATH:-}"
 VERSION="${TAG#v}"
 NUMERIC="${VERSION%%-*}"
 
@@ -21,8 +22,12 @@ APP="dist/FoodTruck.app"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swift build -c "$CONFIG" --product foodtruck
-cp "$(swift build -c "$CONFIG" --show-bin-path)/foodtruck" "$APP/Contents/MacOS/FoodTruck"
+BUILD=(swift build -c "$CONFIG")
+if [ -n "$SCRATCH_PATH" ]; then
+  BUILD+=(--scratch-path "$SCRATCH_PATH")
+fi
+"${BUILD[@]}" --product foodtruck
+cp "$("${BUILD[@]}" --show-bin-path)/foodtruck" "$APP/Contents/MacOS/FoodTruck"
 
 # Localisations, flattened to the layout a real bundle uses. L10n tries the
 # SwiftPM layout, this one, and Foundation's own lookup, so one code path serves
@@ -31,12 +36,14 @@ for lproj in Sources/FoodTruckKit/Resources/*.lproj; do
   cp -R "$lproj" "$APP/Contents/Resources/"
 done
 
-# The shipped recipes and the pin manifest. Read-only here on purpose: this copy
+# The shipped recipes, settings, and pin manifest. Read-only here on purpose:
+# this copy
 # is inside the signed bundle, so a forked recipe in the user's pantry can never
 # repoint a download.
 mkdir -p "$APP/Contents/Resources/Cookbook"
 cp -R Cookbook/recipes "$APP/Contents/Resources/Cookbook/"
 cp Cookbook/pins.json "$APP/Contents/Resources/Cookbook/"
+cp Cookbook/settings.json "$APP/Contents/Resources/Cookbook/"
 
 LOCALES=$(for d in Sources/FoodTruckKit/Resources/*.lproj; do
   printf '<string>%s</string>' "$(basename "$d" .lproj)"; done)

@@ -27,6 +27,23 @@ struct Verdict {
         }
     }
 
+    init(_ severity: Severity) {
+        switch severity {
+        case .risk:
+            self.init(symbol: "exclamationmark.octagon.fill", tint: .red,
+                      label: t("severity.risk"))
+        case .drift:
+            self.init(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                      label: t("severity.drift"))
+        case .notice:
+            self.init(symbol: "info.circle", tint: .secondary,
+                      label: t("severity.notice"))
+        case .ok:
+            self.init(symbol: "checkmark.circle", tint: .green,
+                      label: t("severity.ok"))
+        }
+    }
+
     private init(symbol: String, tint: Color, label: String) {
         self.symbol = symbol; self.tint = tint; self.label = label
     }

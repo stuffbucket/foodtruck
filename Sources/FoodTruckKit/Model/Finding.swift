@@ -24,6 +24,16 @@ public enum Severity: String, Codable, Sendable, Comparable, CaseIterable {
 /// build must see a real translation, not an English fallback with a
 /// well-designed box around it.
 public struct Finding: Codable, Sendable, Identifiable, Equatable {
+    /// Where a finding belongs in an Inventory presentation. Other recipes may
+    /// leave this unset; absence also keeps reports written before this field
+    /// was introduced decodable.
+    public enum Section: String, Codable, Sendable, CaseIterable {
+        case attention
+        case change
+        case history
+        case observation
+    }
+
     public var id: String
     public var severity: Severity
     /// Localisation key, e.g. `finding.tool.missing`. Resolved via `L10n`.
@@ -40,6 +50,8 @@ public struct Finding: Codable, Sendable, Identifiable, Equatable {
     public var fixable: Bool
     /// Localisation key for the human's next step when `fixable` is false.
     public var remedy: String?
+    /// Optional presentation taxonomy. Inventory assigns this to every finding.
+    public var section: Section?
 
     public init(
         id: String,
@@ -49,7 +61,8 @@ public struct Finding: Codable, Sendable, Identifiable, Equatable {
         observed: String? = nil,
         desired: String? = nil,
         fixable: Bool = true,
-        remedy: String? = nil
+        remedy: String? = nil,
+        section: Section? = nil
     ) {
         self.id = id
         self.severity = severity
@@ -59,6 +72,7 @@ public struct Finding: Codable, Sendable, Identifiable, Equatable {
         self.desired = desired
         self.fixable = fixable
         self.remedy = remedy
+        self.section = section
     }
 }
 
@@ -124,6 +138,29 @@ public struct RecipeReport: Codable, Sendable, Equatable {
     public var provenCount: Int { checks.filter { $0.passed && !$0.vacuous }.count }
 
     public var worstSeverity: Severity { findings.map(\.severity).max() ?? .ok }
+
+    private var findingsBySeverity: [Finding] {
+        findings.enumerated().sorted { lhs, rhs in
+            lhs.element.severity == rhs.element.severity
+                ? lhs.offset < rhs.offset
+                : lhs.element.severity > rhs.element.severity
+        }.map(\.element)
+    }
+
+    /// Differences that require a decision or a change, most urgent first.
+    public var findingsRequiringAction: [Finding] {
+        findingsBySeverity.filter { $0.severity >= .drift }
+    }
+
+    /// Useful context which must not masquerade as work the person needs to do.
+    public var observations: [Finding] {
+        findingsBySeverity.filter { $0.severity < .drift }
+    }
+
+    /// Actionable differences this recipe says `converge` can resolve.
+    public var fixableActionFindings: [Finding] {
+        findingsRequiringAction.filter(\.fixable)
+    }
 
     /// Whether anything here actually needs doing.
     ///

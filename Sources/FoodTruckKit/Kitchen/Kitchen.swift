@@ -31,6 +31,9 @@ public struct Kitchen: Sendable {
     /// unaffected -- auditing a recipe you would not run is the normal case and
     /// is how the UI shows you what converging *would* cost.
     public var blastCeiling: Blast
+    /// The immutable settings resolved for this operation. Optional only for
+    /// source compatibility with callers that do not run profile-aware recipes.
+    public let profile: SettingsProfile?
     private let engines: [String: any RecipeEngine]
     /// The environment recipes are handed. Nil builds the usual one from
     /// `Locations`; a caller supplies its own to seal a run off from the host,
@@ -41,6 +44,7 @@ public struct Kitchen: Sendable {
     public init(
         locations: Locations,
         recipes: [Recipe],
+        profile: SettingsProfile? = nil,
         engines: [any RecipeEngine] = [BuiltinEngine(), TaskfileEngine()],
         blastCeiling: Blast = .privileged,
         environment: [String: String]? = nil
@@ -48,6 +52,7 @@ public struct Kitchen: Sendable {
         self.locations = locations
         self.recipes = recipes
         self.blastCeiling = blastCeiling
+        self.profile = profile
         self.engines = Dictionary(uniqueKeysWithValues: engines.map { ($0.id, $0) })
         self.environment = environment
     }
@@ -81,10 +86,15 @@ public struct Kitchen: Sendable {
     }
 
     private func context(dryRun: Bool, vars: [String: String]) -> RunContext {
-        RunContext(
+        var resolvedVars = profile?.vars ?? [:]
+        // An explicit value belongs to this invocation and therefore overrides
+        // the profile's default for the same key.
+        resolvedVars.merge(vars) { _, explicit in explicit }
+        return RunContext(
             locations: locations,
             environment: environment ?? Exec.baseEnvironment(locations),
-            dryRun: dryRun, vars: vars, blastCeiling: blastCeiling)
+            dryRun: dryRun, vars: resolvedVars, profile: profile,
+            blastCeiling: blastCeiling)
     }
 
     /// Read-only verbs ignore the dependency graph entirely and run every recipe

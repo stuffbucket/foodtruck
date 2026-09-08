@@ -86,6 +86,13 @@ public struct Locations: Sendable, Equatable {
 
     // MARK: - Derived paths
 
+    /// The user's settings overlay, under XDG_CONFIG_HOME/foodtruck.
+    public var settings: URL { config.appending(path: "settings.json") }
+    /// The complete defaults beside recipes and pins in the signed Cookbook.
+    public var bundledSettings: URL? {
+        seed?.deletingLastPathComponent().appending(path: "settings.json")
+    }
+
     /// The git-backed store of recipes. `main` is last-known-good.
     ///
     /// Named for what it holds. Recipes live in a cookbook; a pantry holds

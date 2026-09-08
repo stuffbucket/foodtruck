@@ -88,8 +88,9 @@ struct SplitMix64: RandomNumberGenerator {
 
 public enum SelfTest {
     public static var suites: [Suite] {
-        [LocationSuite.suite, GraphSuite.suite, ReportSuite.suite, EvidenceSuite.suite,
-         ReadOnlySuite.suite, ConvergeSuite.suite, InventorySuite.suite, IntlSuite.suite]
+        [LocationSuite.suite, SettingsSuite.suite, GraphSuite.suite, ReportSuite.suite,
+         EvidenceSuite.suite, ReadOnlySuite.suite, ConvergeSuite.suite,
+         InventorySuite.suite, IntlSuite.suite]
     }
 
     /// - Parameters:

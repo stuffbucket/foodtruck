@@ -25,6 +25,85 @@ enum Main {
     }
 }
 
+/// Settings and the hermetic subprocess environment for one top-level
+/// operation. Profile paths may consult ambient variables, but recipes receive
+/// only FoodTruck's deliberately small execution environment.
+enum OperationSettingsFailure: Error, Sendable {
+    case settings(SettingsFailure)
+    case profile(path: String, reason: String)
+
+    var path: String {
+        switch self {
+        case .settings(let failure): failure.path
+        case .profile(let path, _): path
+        }
+    }
+
+    var reason: String {
+        switch self {
+        case .settings(let failure): failure.reason
+        case .profile(_, let reason): reason
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .settings(let failure): failure.description
+        case .profile(let path, let reason):
+            "settings profile could not be resolved for the runtime environment at \(path): \(reason)"
+        }
+    }
+}
+
+struct OperationSettings: Sendable {
+    let profile: SettingsProfile
+    let environment: [String: String]
+
+    static func resolve(_ locations: Locations) -> Result<Self, OperationSettingsFailure> {
+        let ambient = ProcessInfo.processInfo.environment
+        let environment = Exec.baseEnvironment(locations, inherit: ambient)
+        // SettingsPathSource may explicitly name any ambient variable. Overlay
+        // FoodTruck's canonical runtime values so those paths resolve without
+        // granting the same ambient environment to recipes or probes.
+        var profileEnvironment = ambient
+        profileEnvironment.merge(environment) { _, canonical in canonical }
+        let settings: FoodTruckSettings
+        let path: String
+        switch SettingsLoader.load(locations) {
+        case .missing(let defaults):
+            settings = defaults
+            path = locations.bundledSettings?.path ?? "Cookbook/settings.json"
+        case .loaded(let loaded):
+            settings = loaded
+            path = locations.settings.path
+        case .invalid(let failure):
+            return .failure(.settings(failure))
+        }
+        do {
+            return .success(Self(
+                profile: try SettingsProfile(
+                    settings: settings, environment: profileEnvironment),
+                environment: environment))
+        } catch {
+            return .failure(.profile(path: path, reason: String(describing: error)))
+        }
+    }
+
+    static func fault(_ failure: OperationSettingsFailure, verb: Verb) -> RecipeFault {
+        switch failure {
+        case .settings(let settings):
+            return RecipeFault(
+                kind: settings.source == .user ? .settingsInvalid : .settingsUnavailable,
+                recipe: "core.settings", verb: verb,
+                args: ["path": settings.path], detail: settings.description)
+        case .profile:
+            return RecipeFault(
+                kind: .runtimeEnvironmentInvalid, recipe: "core.settings", verb: verb,
+                args: ["path": failure.path], detail: failure.detail)
+        }
+    }
+}
+
 enum CLI {
     static func run(_ argv: [String]) async -> Int32 {
         let locations = Locations.resolved()
@@ -119,8 +198,15 @@ enum CLI {
     static func inspect(
         _ locations: Locations, verb: Verb, json: Bool, all: Bool
     ) async -> Int32 {
+        let operation: OperationSettings
+        switch OperationSettings.resolve(locations) {
+        case .success(let resolved): operation = resolved
+        case .failure(let failure): return settingsError(failure, json: json)
+        }
         let (recipes, faults) = Cookbook.load(locations)
-        let kitchen = Kitchen(locations: locations, recipes: recipes)
+        let kitchen = Kitchen(
+            locations: locations, recipes: recipes, profile: operation.profile,
+            environment: operation.environment)
         var service = await kitchen.inspect(verb)
         // Same rule as the window: FoodTruck's own housekeeping is not news.
         // `--all` is for us, and for anyone debugging FoodTruck itself.
@@ -156,8 +242,17 @@ enum CLI {
     /// giving the notices somewhere to point -- "some command names are
     /// installed twice" is only useful if you can then ask which.
     static func inventory(_ locations: Locations, _ args: [String]) async -> Int32 {
-        let environment = Exec.baseEnvironment(locations)
-        let store = InventoryStore(root: locations.inventory)
+        let operation: OperationSettings
+        switch OperationSettings.resolve(locations) {
+        case .success(let resolved): operation = resolved
+        case .failure(let failure): return settingsError(failure)
+        }
+        let environment = operation.environment
+        let profile = operation.profile
+        let store = InventoryStore(
+            root: locations.inventory, home: profile.home,
+            systemRoot: profile.systemRoot,
+            gitCandidates: profile.inventory.gitCandidates)
 
         if args.contains("--history") {
             let entries = await store.history(limit: 20, environment: environment)
@@ -169,12 +264,13 @@ enum CLI {
             return 0
         }
 
-        // Probes as well as scans, so this shows the same versions the audit
-        // records rather than a weaker view of the same machine.
-        let home = URL(filePath: environment["HOME"] ?? NSHomeDirectory())
-        let current = await Inventory
-            .scan(home: home, locations: locations)
-            .probingVersions(home: home, environment: environment)
+        // The CLI and recipe deliberately share the complete survey path. The
+        // store is read before probing so either interface can reuse versions
+        // recorded by the other.
+        let survey = await InventorySurvey.run(
+            home: profile.home, locations: locations, environment: environment,
+            settings: profile.inventory, store: store)
+        let current = survey.inventory
 
         if args.contains("--duplicates") {
             let groups = current.duplicated.sorted { $0.key < $1.key }
@@ -277,16 +373,29 @@ enum CLI {
         print(Render.paint(
             "\(current.tools.count) programs across \(current.roots.count) directories. "
             + "Anywhere not listed by `--all` was not searched.", "90"))
-        if store.load() == nil {
+        switch survey.prior {
+        case .missing:
             print(Render.paint(
                 "Not recorded yet — `foodtruck converge` starts the history.", "90"))
+        case .invalid(let detail):
+            print(Render.paint(t("finding.inventory.snapshotUnreadable"), "33"))
+            print(Render.paint(detail, "90"))
+        case .loaded:
+            break
         }
         return 0
     }
 
     static func converge(_ locations: Locations, dryRun: Bool, only: Set<String>) async -> Int32 {
+        let operation: OperationSettings
+        switch OperationSettings.resolve(locations) {
+        case .success(let resolved): operation = resolved
+        case .failure(let failure): return settingsError(failure)
+        }
         let (recipes, faults) = Cookbook.load(locations)
-        let kitchen = Kitchen(locations: locations, recipes: recipes)
+        let kitchen = Kitchen(
+            locations: locations, recipes: recipes, profile: operation.profile,
+            environment: operation.environment)
         do {
             let service = try await kitchen.converge(
                 only: only.isEmpty ? nil : only, dryRun: dryRun)
@@ -296,6 +405,35 @@ enum CLI {
             FileHandle.standardError.write(Data("\(error)\n".utf8))
             return 1
         }
+    }
+
+    private static func settingsError(
+        _ failure: OperationSettingsFailure, json: Bool = false
+    ) -> Int32 {
+        let fault = OperationSettings.fault(failure, verb: .audit)
+        if json {
+            let payload: [String: Any] = [
+                "error": [
+                    "kind": fault.kind.rawValue,
+                    "message": t(fault.title, fault.args),
+                    "remedy": t(fault.remedy, fault.args),
+                    "path": failure.path,
+                    "detail": failure.detail,
+                ],
+            ]
+            if let data = try? JSONSerialization.data(
+                withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+                FileHandle.standardOutput.write(data)
+                print("")
+            }
+        } else {
+            FileHandle.standardError.write(Data(
+                "foodtruck: \(t(fault.title, fault.args))\n"
+                    .appending("\(failure.detail)\n")
+                    .appending("\(t(fault.remedy, fault.args))\n")
+                    .utf8))
+        }
+        return 1
     }
 
     static func emitJSON(_ service: Service, setupNeeded: Bool = false) -> Int32 {

@@ -28,6 +28,19 @@ tasks:
     deps: [build]
     cmds: ['./scripts/tripwire.sh -- {{.BIN}} selftest']
 
+  test:app:
+    desc: Prove the assembled app works without its SwiftPM build tree
+    cmds:
+      - |
+        set -eu
+        work="$(mktemp -d)"
+        trap 'rm -rf "$work"' EXIT
+        SCRATCH_PATH="$work/build" TAG=v0.0.0-local CONFIG=release ./scripts/make-app.sh
+        cp -R dist/FoodTruck.app "$work/FoodTruck.app"
+        rm -rf "$work/build"
+        test -z "$(find "$work/FoodTruck.app" -name FoodTruck_FoodTruckKit.bundle -print -quit)"
+        "$work/FoodTruck.app/Contents/MacOS/FoodTruck" selftest intl --in-order
+
   demo:
     desc: Full audit/converge loop in a throwaway root — touches nothing real
     deps: [build]
@@ -43,4 +56,4 @@ tasks:
 
   check:
     desc: Everything CI runs
-    cmds: [{task: test:clean}]
+    cmds: [{task: test:clean}, {task: test:app}]

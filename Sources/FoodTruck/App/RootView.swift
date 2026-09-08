@@ -11,36 +11,38 @@ struct RootView: View {
         } detail: {
             if let id = model.selection,
                let recipe = model.visibleRecipes.first(where: { $0.id == id }) {
-                RecipeDetail(model: model, recipe: recipe)
+                if recipe.id == "env.inventory" {
+                    InventoryDetail(model: model, recipe: recipe)
+                        .id(recipe.id)
+                } else {
+                    RecipeDetail(model: model, recipe: recipe)
+                        .id(recipe.id)
+                }
             } else {
                 ContentUnavailableView(t("empty.title"), systemImage: "shippingbox",
                                        description: Text(t("empty.body")))
             }
         }
         .safeAreaInset(edge: .top) {
-            if let fault = model.housekeepingFault {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t(fault.title, fault.args)).fontWeight(.medium)
-                        Text(t(fault.remedy, fault.args))
-                            .font(.callout).foregroundStyle(.secondary)
+            if model.housekeepingFault != nil || !model.loadFaults.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let fault = model.housekeepingFault {
+                        FaultMessage(fault: fault)
                     }
-                    Spacer(minLength: 0)
+                    ForEach(Array(model.loadFaults.enumerated()), id: \.offset) { _, fault in
+                        FaultMessage(fault: fault)
+                    }
                 }
                 .padding(12)
                 .background(.bar)
-                .accessibilityElement(children: .combine)
             }
         }
         .navigationTitle(t("window.title"))
         .toolbar { toolbar }
         .task {
             // Settle FoodTruck's own house, then audit -- both without being
-            // asked. Auditing changes nothing, so there is no reason to make
-            // someone press a button for the answer they opened the app to get.
+            // asked. The audit leaves the user's environment untouched and only
+            // updates FoodTruck's private history, so the answer is ready on open.
             if !model.hasAnyResult { await model.start() }
         }
         .onChange(of: model.announcement) { _, new in
@@ -59,12 +61,28 @@ struct RootView: View {
         return parts.joined(separator: t("list.separator"))
     }
 
+    private var issueSummary: String {
+        [
+            (model.driftCount, "summary.drift"),
+            (model.blockedCount, "summary.blocked"),
+            (model.failedCount, "summary.failed"),
+        ].compactMap { count, key in count > 0 ? tn(key, count) : nil }
+            .joined(separator: t("list.separator"))
+    }
+
+    private var summaryVerdict: (symbol: String, tint: Color) {
+        if model.failedCount > 0 { return ("xmark.octagon.fill", .red) }
+        if model.driftCount > 0 { return ("exclamationmark.triangle.fill", .orange) }
+        if model.blockedCount > 0 { return ("clock.fill", .secondary) }
+        return ("checkmark.circle.fill", .green)
+    }
+
     private var sidebar: some View {
         List(selection: $model.selection) {
             ForEach(model.visibleRecipes) { recipe in
                 RecipeRow(recipe: recipe,
                           outcome: model.outcome(for: recipe.id),
-                          findings: model.findings(for: recipe.id).count)
+                          actions: model.results[recipe.id]?.report.findingsRequiringAction.count ?? 0)
                     .tag(recipe.id)
             }
         }
@@ -75,22 +93,19 @@ struct RootView: View {
         // and it does not scroll away with the list.
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
-                Image(systemName: model.needingAttention == 0
-                      ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(model.needingAttention == 0 ? .green : .orange)
+                Image(systemName: summaryVerdict.symbol)
+                    .foregroundStyle(summaryVerdict.tint)
                     .imageScale(.small)
                     .accessibilityHidden(true)
                 // States its own scope rather than asserting "everything".
                 // FoodTruck can only speak for the recipes it has, and saying
                 // how many predicates actually proved something is the
                 // difference between a status and a claim.
-                Text(model.needingAttention == 0
-                     ? summaryWhenClean
-                     : tn("summary.attention", model.needingAttention))
+                Text(model.problemCount == 0 ? summaryWhenClean : issueSummary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .help(model.needingAttention == 0 ? t("summary.clean.help") : "")
+                    .help(model.problemCount == 0 ? t("summary.clean.help") : "")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
@@ -135,7 +150,7 @@ struct RootView: View {
 struct RecipeRow: View {
     let recipe: Recipe
     let outcome: VerbOutcome?
-    let findings: Int
+    let actions: Int
 
     var body: some View {
         HStack(spacing: 8) {
@@ -151,10 +166,9 @@ struct RecipeRow: View {
         // The row is one thing to VoiceOver, phrased as a sentence, rather than
         // four fragments read in layout order.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(t("a11y.recipe.row", [
+        .accessibilityLabel(tn("a11y.recipe.actions", actions, [
             "name": t(recipe.name),
             "state": Verdict(outcome).label,
-            "findings": String(findings),
         ]))
     }
 }

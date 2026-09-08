@@ -1,5 +1,80 @@
 import Foundation
 
+/// Turns the validated declarative reporting table into stable findings. The
+/// code retains only identity and evidence shape; presentation policy belongs
+/// to the operation's immutable settings profile.
+private struct InventoryFindingPolicy {
+    private let declarations: [InventoryReportID: ReportingDeclaration]
+
+    init(_ declarations: [ReportingDeclaration]) {
+        self.declarations = Dictionary(
+            uniqueKeysWithValues: declarations.compactMap { declaration in
+                InventoryReportID(rawValue: declaration.id).map { ($0, declaration) }
+            })
+    }
+
+    func make(
+        _ id: InventoryReportID,
+        discriminator: String? = nil,
+        args: [String: String] = [:],
+        observed: String? = nil
+    ) -> Finding {
+        guard let declaration = declarations[id] else {
+            preconditionFailure("validated reporting policy omitted \(id.rawValue)")
+        }
+        return Finding(
+            id: discriminator.map { "\(id.findingID):\($0)" } ?? id.findingID,
+            severity: declaration.severity,
+            title: declaration.title,
+            args: args,
+            observed: observed ?? id.observedArgument.flatMap { args[$0] },
+            fixable: declaration.fixable,
+            remedy: declaration.remedy,
+            section: declaration.section)
+    }
+}
+
+private extension InventoryReportID {
+    var findingID: String {
+        switch self {
+        case .probeRefused: "inventory.probeRefused"
+        case .softwareDiscoveryRefused: "inventory.softwareDiscoveryRefused"
+        case .snapshotUnreadable: "inventory.snapshotUnreadable"
+        case .firstObservation: "inventory.unrecorded"
+        case .hostChanged: "inventory.host.changed"
+        case .coverageAdded: "inventory.coverage.added"
+        case .coverageRemoved: "inventory.coverage.removed"
+        case .coverageReordered: "inventory.coverage.reordered"
+        case .softwareCoverageAdded: "inventory.software.coverage.added"
+        case .softwareCoverageRemoved: "inventory.software.coverage.removed"
+        case .managersChanged: "inventory.managers.changed"
+        case .programAdded: "inventory.change.added"
+        case .programRemoved: "inventory.change.removed"
+        case .programVersionChanged, .programOriginChanged, .programTargetChanged,
+             .programKindChanged, .programReplaced: "inventory.change.modified"
+        case .softwareAdded: "inventory.software.change.added"
+        case .softwareRemoved: "inventory.software.change.removed"
+        case .softwareChanged: "inventory.software.change.modified"
+        case .versionConflict: "inventory.versionConflict"
+        case .duplicated: "inventory.duplicated"
+        case .shimShadowed: "inventory.shimShadowed"
+        case .contested: "inventory.contested"
+        case .unmanaged: "inventory.unmanaged"
+        case .noGit: "inventory.nogit"
+        case .historyFailed: "inventory.historyFailed"
+        }
+    }
+
+    var observedArgument: String? {
+        switch self {
+        case .versionConflict: "versions"
+        case .contested: "managers"
+        case .unmanaged: "path"
+        default: nil
+        }
+    }
+}
+
 /// What is actually on this machine, and what has changed since last time.
 ///
 /// This is the first recipe that is about the user rather than about FoodTruck,
@@ -15,10 +90,9 @@ import Foundation
 /// being here. It is also the recipe that makes the others writable -- you
 /// cannot declare intent about tools you have forgotten you have.
 ///
-/// Its desired state is deliberately modest, because there is no profile yet
-/// and inventing one here would be inventing the user's intent. The only thing
-/// it asks for is that the history be current: the machine as recorded should
-/// be the machine as it is. Everything else it has to say, it says as a notice.
+/// There is no desired machine state here because there is no profile yet, and
+/// inventing one would be inventing the user's intent. History is evidence, not
+/// a goal; only command-resolution ambiguity asks the user for a decision.
 struct InventoryRecipe: BuiltinRecipe {
     var descriptor: Recipe {
         Recipe(
@@ -38,80 +112,169 @@ struct InventoryRecipe: BuiltinRecipe {
         )
     }
 
-    /// Two passes, and the split is the point. The first reads the machine
-    /// without running any of it. The second runs the short declared list of
-    /// tools this project exists to keep pinned, and believes what they say
-    /// over what their directory names imply.
-    private func survey(_ context: RunContext, reusing previous: Inventory?) async -> Inventory {
-        let home = URL(filePath: context.environment["HOME"] ?? NSHomeDirectory())
-        // A seam for the tests, and only for them. Without it every test that
-        // audits this recipe reads -- and probes -- the machine running the
-        // tests, which turned a mutation run into a few thousand subprocess
-        // launches against a real Mac.
-        // No boolean in this expression, on purpose. It used to test
-        // `isEmpty`, and this file is a mutation-testing target: flipping that
-        // one comparison would send a sealed test back at the real machine.
-        // A seal a mutant can pick is not a seal.
-        let systemRoot = context.environment["FOODTRUCK_SCAN_ROOT"]
-            .map { URL(filePath: $0) } ?? URL(filePath: "/")
-        return await Inventory
-            .scan(home: home, locations: context.locations, systemRoot: systemRoot)
-            .probingVersions(home: home, environment: context.environment,
-                             systemRoot: systemRoot, reusing: previous)
+    private func findingPolicy(_ context: RunContext) -> InventoryFindingPolicy {
+        guard let profile = context.profile else {
+            preconditionFailure("env.inventory requires a resolved settings profile")
+        }
+        return InventoryFindingPolicy(profile.inventory.reporting)
     }
 
-    func audit(_ context: RunContext) async -> RecipeReport {
-        let store = InventoryStore(root: context.locations.inventory)
-        // Loaded before the survey, not after: the recorded versions are what
-        // let the survey skip re-running programs it has already asked.
-        let previous = store.load()
-        let current = await survey(context, reusing: previous)
+    private func store(_ context: RunContext) -> InventoryStore {
+        guard let profile = context.profile else {
+            preconditionFailure("env.inventory requires a resolved settings profile")
+        }
+        return InventoryStore(
+            root: context.locations.inventory, home: profile.home,
+            systemRoot: profile.systemRoot,
+            gitCandidates: profile.inventory.gitCandidates)
+    }
+
+    private func completedSurvey(_ context: RunContext) async -> InventorySurveyResult {
+        guard let profile = context.profile else {
+            preconditionFailure("env.inventory requires a resolved settings profile")
+        }
+        return await InventorySurvey.run(
+            home: profile.home, locations: context.locations, environment: context.environment,
+            settings: profile.inventory, store: store(context))
+    }
+
+    private func inspect(
+        _ context: RunContext, completed: InventorySurveyResult? = nil
+    ) async -> BuiltinAudit {
+        let store = store(context)
+        let survey = if let completed { completed } else { await completedSurvey(context) }
+        let current = survey.inventory
+        let previous: Inventory?
+        let loadFailure: String?
+        switch survey.prior {
+        case .missing:
+            previous = nil
+            loadFailure = nil
+        case .loaded(let inventory):
+            previous = inventory
+            loadFailure = nil
+        case .invalid(let detail):
+            previous = nil
+            loadFailure = detail
+        }
         var report = RecipeReport()
+        let findings = findingPolicy(context)
 
         report.facts["os"] = current.host.describe
         report.facts["arch"] = current.host.arch
         report.facts["kernel"] = current.host.kernel
         report.facts["commandLineTools"] = current.host.commandLineTools ?? "not installed"
-        report.facts["programs"] = String(current.tools.count)
+        report.facts["programs"] = String(current.environmentTools.count)
         report.facts["searched"] = String(current.roots.count)
+        report.facts["software"] = String(current.software.count)
+        report.facts["softwareSearched"] = String(current.softwareRoots.count)
         for (origin, count) in current.countsByOrigin.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             report.facts["from.\(origin.rawValue)"] = String(count)
         }
+        if current.probeRefused {
+            report.findings.append(findings.make(.probeRefused))
+        }
+        if current.softwareDiscoveryRefused {
+            report.findings.append(findings.make(.softwareDiscoveryRefused))
+        }
+        if let loadFailure {
+            report.findings.append(findings.make(.snapshotUnreadable, observed: loadFailure))
+        }
 
-        // MARK: is the history current
+        // MARK: what changed since the previous observation
 
         if let previous {
-            if previous.host != current.host {
-                report.findings.append(Finding(
-                    id: "inventory.host.changed", severity: .drift,
-                    title: "finding.inventory.host.changed",
-                    args: ["before": previous.host.describe, "after": current.host.describe],
-                    observed: current.host.describe, desired: previous.host.describe))
-            }
-            let before = Set(previous.tools.map(\.id))
-            let now = Set(current.tools.map(\.id))
-            let added = now.subtracting(before).count
-            let removed = before.subtracting(now).count
-            let changed = previous.tools != current.tools
+            let home = URL(filePath: context.environment["HOME"] ?? NSHomeDirectory())
+            let toolbox = context.locations.toolbox.standardizedFileURL.path
+            let excludedRoots: Set<String> = [
+                toolbox,
+                Inventory.abbreviate(toolbox, home: home.standardizedFileURL.path),
+            ]
+            let delta = InventoryDelta(
+                previous: previous, current: current, excludingRoots: excludedRoots)
 
-            if changed {
-                report.findings.append(Finding(
-                    id: "inventory.changed", severity: .drift,
-                    title: "finding.inventory.changed",
-                    args: ["added": String(added), "removed": String(removed)],
-                    observed: String(current.tools.count),
-                    desired: String(previous.tools.count)))
+            if let before = delta.previousHost, let after = delta.currentHost {
+                report.findings.append(findings.make(.hostChanged,
+                    args: ["before": hostEvidence(before), "after": hostEvidence(after)]))
             }
-            report.checks.append(Check(
-                id: "recorded", label: "check.inventory.recorded",
-                passed: !changed && previous.host == current.host))
-        } else {
-            report.findings.append(Finding(
-                id: "inventory.unrecorded", severity: .drift,
-                title: "finding.inventory.unrecorded",
-                observed: "unrecorded", desired: "recorded"))
-            report.checks.append(Check(
-                id: "recorded", label: "check.inventory.recorded", passed: false))
+            if !delta.addedRoots.isEmpty {
+                report.findings.append(findings.make(.coverageAdded,
+                    args: ["paths": delta.addedRoots.joined(separator: ", ")]))
+            }
+            if !delta.removedRoots.isEmpty {
+                report.findings.append(findings.make(.coverageRemoved,
+                    args: ["paths": delta.removedRoots.joined(separator: ", ")]))
+            }
+            if delta.rootsReordered {
+                report.findings.append(findings.make(.coverageReordered))
+            }
+            if !delta.addedSoftwareRoots.isEmpty {
+                report.findings.append(findings.make(.softwareCoverageAdded,
+                    args: ["paths": softwareCoverageEvidence(delta.addedSoftwareRoots)]))
+            }
+            if !delta.removedSoftwareRoots.isEmpty {
+                report.findings.append(findings.make(.softwareCoverageRemoved,
+                    args: ["paths": softwareCoverageEvidence(delta.removedSoftwareRoots)]))
+            }
+            for artifact in delta.addedSoftware {
+                report.findings.append(findings.make(
+                    .softwareAdded, discriminator: artifact.id,
+                    args: softwareEvidence(artifact)))
+            }
+            for artifact in delta.removedSoftware {
+                report.findings.append(findings.make(
+                    .softwareRemoved, discriminator: artifact.id,
+                    args: softwareEvidence(artifact)))
+            }
+            for change in delta.modifiedSoftware {
+                var args = softwareEvidence(change.after)
+                args["before"] = softwareDescription(change.before)
+                args["after"] = softwareDescription(change.after)
+                report.findings.append(findings.make(
+                    .softwareChanged, discriminator: change.after.id, args: args))
+            }
+            if let before = delta.previousManagers, let after = delta.currentManagers {
+                report.findings.append(findings.make(.managersChanged,
+                    args: ["before": managerEvidence(before),
+                           "after": managerEvidence(after)]))
+            }
+            for tool in delta.added {
+                report.findings.append(findings.make(.programAdded,
+                    discriminator: tool.path, args: evidence(for: tool)))
+            }
+            for tool in delta.removed {
+                report.findings.append(findings.make(.programRemoved,
+                    discriminator: tool.path, args: evidence(for: tool)))
+            }
+            for change in delta.modified {
+                let before = change.before
+                let after = change.after
+                let modification: InventoryReportID
+                var args = evidence(for: after)
+                if before.version != after.version {
+                    modification = .programVersionChanged
+                    args["before"] = before.version ?? t("value.unknown")
+                    args["after"] = after.version ?? t("value.unknown")
+                } else if before.origin != after.origin {
+                    modification = .programOriginChanged
+                    args["before"] = originLabel(before.origin)
+                    args["after"] = originLabel(after.origin)
+                } else if before.real != after.real {
+                    modification = .programTargetChanged
+                    args["before"] = before.real ?? before.path
+                    args["after"] = after.real ?? after.path
+                } else if before.shim != after.shim {
+                    modification = .programKindChanged
+                    args["before"] = t(before.shim ? "inventory.kind.shim" : "inventory.kind.direct")
+                    args["after"] = t(after.shim ? "inventory.kind.shim" : "inventory.kind.direct")
+                } else {
+                    modification = .programReplaced
+                }
+                report.findings.append(findings.make(
+                    modification, discriminator: after.path, args: args))
+            }
+        } else if loadFailure == nil {
+            report.findings.append(findings.make(.firstObservation))
         }
 
         // The order these are appended is the order a reader meets them: the
@@ -132,48 +295,38 @@ struct InventoryRecipe: BuiltinRecipe {
         // different versions means `PATH` order decides which one you get, and
         // that is worth naming individually.
         let conflicting = current.conflictingVersions
+        let shadowed = current.shadowedShims
         for (name, copies) in conflicting.sorted(by: { $0.key < $1.key }) {
             let versions = copies
                 .map { "\($0.version ?? "unknown") (\($0.path))" }
                 .joined(separator: ", ")
-            report.findings.append(Finding(
-                id: "inventory.versionConflict:\(name)", severity: .notice,
-                title: "finding.inventory.versionConflict",
-                args: ["tool": name, "versions": versions],
-                observed: versions,
-                fixable: false, remedy: "finding.inventory.versionConflict.remedy"))
+            report.findings.append(findings.make(.versionConflict,
+                discriminator: name, args: ["tool": name, "versions": versions]))
         }
-        let sameVersion = current.duplicated.count - conflicting.count
-        if sameVersion > 0 {
-            report.findings.append(Finding(
-                id: "inventory.duplicated", severity: .notice,
-                title: "finding.inventory.duplicated",
-                args: ["count": String(sameVersion)],
-                fixable: false, remedy: "finding.inventory.duplicated.remedy"))
+        var harmlessDuplicateNames = Set(current.duplicated.keys)
+        harmlessDuplicateNames.subtract(conflicting.keys)
+        harmlessDuplicateNames.subtract(shadowed.keys)
+        if !harmlessDuplicateNames.isEmpty {
+            report.findings.append(findings.make(.duplicated,
+                args: ["count": String(harmlessDuplicateNames.count)]))
         }
         report.checks.append(Check(
             id: "unique", label: "check.inventory.unique", passed: conflicting.isEmpty,
-            vacuous: current.tools.isEmpty))
+            vacuous: current.environmentTools.isEmpty))
 
-        // A shim beside a real install. Neither knows about the other, the
-        // shim has no version to compare, and PATH order decides -- so this
-        // gets said plainly rather than folded into a count.
-        let shadowed = current.shadowedShims
-        for (name, copies) in shadowed.sorted(by: { $0.key < $1.key }) {
-            guard let shim = copies.first(where: \.shim),
-                  let direct = copies.first(where: { !$0.shim }) else { continue }
-            report.findings.append(Finding(
-                id: "inventory.shimShadowed:\(name)", severity: .notice,
-                title: "finding.inventory.shimShadowed",
-                args: ["tool": name, "manager": shim.origin.rawValue,
-                       "shim": shim.path, "direct": direct.path,
-                       "version": direct.version ?? "unknown"],
-                observed: direct.path, desired: shim.path,
-                fixable: false, remedy: "finding.inventory.shimShadowed.remedy"))
+        // Commands in the same two directories ask for one PATH decision,
+        // regardless of how many executables the package installed there.
+        for group in current.shimShadowGroups {
+            report.findings.append(findings.make(.shimShadowed,
+                discriminator: "\(group.shimDirectory)->\(group.directDirectory)",
+                args: ["tools": group.commands.joined(separator: ", "),
+                       "manager": originLabel(group.manager),
+                       "shim": group.shimDirectory,
+                       "direct": group.directDirectory]))
         }
         report.checks.append(Check(
             id: "shims", label: "check.inventory.shims", passed: shadowed.isEmpty,
-            vacuous: !current.tools.contains(where: \.shim)))
+            vacuous: !current.environmentTools.contains(where: \.shim)))
 
         // MARK: which tools decide what the other tools are
 
@@ -186,12 +339,9 @@ struct InventoryRecipe: BuiltinRecipe {
         // loser goes on reporting the version it believes you are using.
         let contested = current.contested
         for (runtime, managers) in contested.sorted(by: { $0.key < $1.key }) {
-            report.findings.append(Finding(
-                id: "inventory.contested:\(runtime)", severity: .notice,
-                title: "finding.inventory.contested",
-                args: ["runtime": runtime, "managers": managers.joined(separator: ", ")],
-                observed: managers.joined(separator: ", "),
-                fixable: false, remedy: "finding.inventory.contested.remedy"))
+            report.findings.append(findings.make(.contested,
+                discriminator: runtime,
+                args: ["runtime": runtime, "managers": managers.joined(separator: ", ")]))
         }
         report.checks.append(Check(
             id: "managers", label: "check.inventory.managers",
@@ -206,42 +356,111 @@ struct InventoryRecipe: BuiltinRecipe {
         // into a count would lose the only useful part -- which ones.
         let unaccounted = current.unmanaged
         for tool in unaccounted {
-            report.findings.append(Finding(
-                id: "inventory.unmanaged:\(tool.path)", severity: .notice,
-                title: "finding.inventory.unmanaged",
-                args: ["tool": tool.name, "path": tool.path],
-                observed: tool.path, desired: nil,
+            report.findings.append(findings.make(.unmanaged,
                 // FoodTruck will not guess what you meant by installing it.
                 // Adopting it into a package manager, or deleting it, is a
                 // decision -- and there is no profile to record it in yet.
-                fixable: false, remedy: "finding.inventory.unmanaged.remedy"))
+                discriminator: tool.path,
+                args: ["tool": tool.name, "path": tool.path]))
         }
-        report.checks.append(Check(
-            id: "traceable", label: "check.inventory.traceable",
-            passed: unaccounted.isEmpty,
-            // No programs found at all means nothing was proven, not that
-            // everything is accounted for.
-            vacuous: current.tools.isEmpty))
-
         // MARK: can we keep a history at all
 
-        let git = InventoryStore.executable() != nil
+        let git = store.executable() != nil
         if !git {
-            report.findings.append(Finding(
-                id: "inventory.nogit", severity: .notice,
-                title: "finding.inventory.nogit",
-                fixable: false, remedy: "finding.inventory.nogit.remedy"))
+            report.findings.append(findings.make(.noGit))
         }
-        report.checks.append(Check(
-            id: "history", label: "check.inventory.history", passed: git,
-            automatable: false))
+        // The terminal truncates long reports. Keep every actionable consequence
+        // ahead of informational history so the reason for a non-zero result can
+        // never be hidden by a busy week of harmless changes.
+        report.findings = report.findings.enumerated().sorted { lhs, rhs in
+            lhs.element.severity == rhs.element.severity
+                ? lhs.offset < rhs.offset
+                : lhs.element.severity > rhs.element.severity
+        }.map(\.element)
+        return BuiltinAudit(report: report, inventory: current)
+    }
 
-        return report
+    func audit(_ context: RunContext) async -> RecipeReport {
+        await inspect(context).report
+    }
+
+    func auditCapture(_ context: RunContext) async -> BuiltinAudit {
+        await inspect(context)
+    }
+
+    private func hostEvidence(_ host: Host) -> String {
+        let tools = host.commandLineTools ?? t("value.notInstalled")
+        return "\(host.describe), \(host.arch), kernel \(host.kernel), CLT \(tools)"
+    }
+
+    private func managerEvidence(_ managers: [Manager]) -> String {
+        guard !managers.isEmpty else { return t("value.none") }
+        return managers.map { manager in
+            let version = manager.version ?? t("value.unknown")
+            let kind = manager.shellFunction ? "shell-function" : "executable"
+            let runtimes = manager.manages.joined(separator: ",")
+            return "\(manager.id) \(version) [\(kind) \(manager.evidence)] {\(runtimes)}"
+        }.joined(separator: ", ")
+    }
+
+    private func originLabel(_ origin: Origin) -> String {
+        let key = "inventory.origin.\(origin.rawValue)"
+        let localized = t(key)
+        return localized == key ? origin.rawValue : localized
+    }
+
+    private func softwareCoverageEvidence(
+        _ roots: [SoftwareDiscoveryCoverage]
+    ) -> String {
+        roots.map { "\($0.strategy.rawValue): \($0.path)" }.joined(separator: ", ")
+    }
+
+    private func softwareEvidence(_ artifact: SoftwareArtifact) -> [String: String] {
+        [
+            "software": artifact.name,
+            "path": artifact.path,
+            "kind": artifact.kind.rawValue,
+            "versions": artifact.versions.isEmpty
+                ? t("value.unknown") : artifact.versions.joined(separator: ", "),
+            "provider": artifact.provider.map(originLabel) ?? t("value.unknown"),
+            "identifier": artifact.identifier ?? t("value.unknown"),
+        ]
+    }
+
+    private func softwareDescription(_ artifact: SoftwareArtifact) -> String {
+        let versions = artifact.versions.isEmpty
+            ? t("value.unknown") : artifact.versions.joined(separator: ", ")
+        let provider = artifact.provider.map(originLabel) ?? t("value.unknown")
+        return "\(artifact.kind.rawValue), \(versions), \(provider)"
+    }
+
+    private func evidence(for tool: Installed) -> [String: String] {
+        [
+            "tool": tool.name,
+            "path": tool.path,
+            "origin": originLabel(tool.origin),
+            "version": tool.version ?? t("value.unknown"),
+        ]
     }
 
     func converge(_ context: RunContext) async -> Result<RecipeReport, RecipeFault> {
-        let store = InventoryStore(root: context.locations.inventory)
-        let current = await survey(context, reusing: store.load())
+        let store = store(context)
+        let survey = await completedSurvey(context)
+        if case .invalid(let detail) = survey.prior {
+            return .failure(RecipeFault(
+                kind: .unexpectedExit, recipe: descriptor.id, verb: .converge,
+                args: ["recipe": descriptor.id, "verb": "converge"],
+                detail: "\(store.recordURL.path): \(detail)"))
+        }
+        let current = survey.inventory
+        guard !current.probeRefused, !current.softwareDiscoveryRefused else {
+            return .failure(RecipeFault(
+                kind: .unexpectedExit, recipe: descriptor.id, verb: .converge,
+                args: ["recipe": descriptor.id, "verb": "converge"],
+                detail: t(current.softwareDiscoveryRefused
+                    ? "finding.inventory.softwareDiscoveryRefused"
+                    : "finding.inventory.probeRefused")))
+        }
 
         do {
             try store.write(current)
@@ -254,20 +473,21 @@ struct InventoryRecipe: BuiltinRecipe {
 
         let unmanaged = current.unmanaged.count
         let outcome = await store.commit(
-            message: "\(current.host.describe) — \(current.tools.count) programs, "
-                + "\(unmanaged) unmanaged",
+            message: "\(current.host.describe) — \(current.environmentTools.count) programs, "
+                + "\(current.software.count) software units, \(unmanaged) unmanaged",
             environment: context.environment)
 
-        var report = await audit(context)
+        // Build the final report from the completed observation. Re-scanning
+        // here would make one converge execute two surveys and could report a
+        // different machine than the snapshot it just wrote.
+        var report = await inspect(context, completed: survey).report
         if case .failed(let detail) = outcome {
             // The record is written either way; only the history was lost. That
             // is a notice, not a failure -- refusing to converge because git
             // misbehaved would throw away the part that worked.
-            report.findings.append(Finding(
-                id: "inventory.historyFailed", severity: .notice,
-                title: "finding.inventory.historyFailed",
-                observed: detail.trimmingCharacters(in: .whitespacesAndNewlines),
-                fixable: false, remedy: "finding.inventory.nogit.remedy"))
+            report.findings.append(findingPolicy(context).make(
+                .historyFailed,
+                observed: detail.trimmingCharacters(in: .whitespacesAndNewlines)))
         }
         return .success(report)
     }

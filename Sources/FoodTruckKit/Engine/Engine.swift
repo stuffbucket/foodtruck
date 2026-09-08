@@ -9,6 +9,9 @@ public struct RunContext: Sendable {
     public var dryRun: Bool
     /// Desired-state variables from the active profile, handed to the recipe.
     public var vars: [String: String]
+    /// The immutable settings resolved for this run. Optional only so existing
+    /// embedders that construct a context directly remain source-compatible.
+    public let profile: SettingsProfile?
     /// The most damage any recipe is permitted to do in this run.
     ///
     /// This exists because one thing turned out not to be sandboxable at all:
@@ -25,12 +28,14 @@ public struct RunContext: Sendable {
         environment: [String: String],
         dryRun: Bool = false,
         vars: [String: String] = [:],
+        profile: SettingsProfile? = nil,
         blastCeiling: Blast = .privileged
     ) {
         self.locations = locations
         self.environment = environment
         self.dryRun = dryRun
         self.vars = vars
+        self.profile = profile
         self.blastCeiling = blastCeiling
     }
 }
@@ -43,13 +48,18 @@ public struct VerbResult: Sendable {
     public var duration: Double
     /// Raw combined output, for the diagnostics affordance only.
     public var log: String
+    /// The already-scanned inventory, carried in process so the GUI can record
+    /// the observation without running a second scan. Never part of recipe JSON.
+    public var inventory: Inventory?
 
     public init(
         recipe: String, verb: Verb, outcome: VerbOutcome,
-        report: RecipeReport = RecipeReport(), duration: Double = 0, log: String = ""
+        report: RecipeReport = RecipeReport(), duration: Double = 0, log: String = "",
+        inventory: Inventory? = nil
     ) {
         self.recipe = recipe; self.verb = verb; self.outcome = outcome
         self.report = report; self.duration = duration; self.log = log
+        self.inventory = inventory
     }
 }
 

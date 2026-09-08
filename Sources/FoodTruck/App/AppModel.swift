@@ -54,7 +54,28 @@ final class AppModel {
         }
     }
 
-    private var kitchen: Kitchen { Kitchen(locations: locations, recipes: recipes) }
+    private func kitchen(_ operation: OperationSettings, recipes: [Recipe]) -> Kitchen {
+        Kitchen(
+            locations: locations, recipes: recipes, profile: operation.profile,
+            environment: operation.environment)
+    }
+
+    private func operationSettings(for verb: Verb) -> OperationSettings? {
+        switch OperationSettings.resolve(locations) {
+        case .success(let operation):
+            // Clear only a settings-resolution failure. A real housekeeping
+            // failure remains until housekeeping itself succeeds.
+            if housekeepingFault?.kind == .settingsInvalid
+                || housekeepingFault?.kind == .settingsUnavailable
+                || housekeepingFault?.kind == .runtimeEnvironmentInvalid {
+                housekeepingFault = nil
+            }
+            return operation
+        case .failure(let failure):
+            housekeepingFault = OperationSettings.fault(failure, verb: verb)
+            return nil
+        }
+    }
 
     // MARK: - Verbs
 
@@ -65,18 +86,22 @@ final class AppModel {
     /// opening the app has already consented to the app existing. It stays
     /// silent unless it fails.
     func start() async {
-        await settleHousekeeping()
+        guard let operation = operationSettings(for: .audit) else {
+            announce()
+            return
+        }
+        await settleHousekeeping(operation)
         reload()
-        await audit()
+        await audit(operation)
     }
 
-    private func settleHousekeeping() async {
+    private func settleHousekeeping(_ operation: OperationSettings) async {
         let chores = recipes.filter { $0.scope == .housekeeping }
         guard !chores.isEmpty else { return }
         activity = .auditing
         defer { activity = .idle }
         do {
-            let service = try await Kitchen(locations: locations, recipes: chores)
+            let service = try await kitchen(operation, recipes: chores)
                 .converge(only: Set(chores.map(\.id)))
             for result in service.results { results[result.recipe] = result }
             if case .failed(let fault) = service.failed.first?.outcome {
@@ -93,26 +118,45 @@ final class AppModel {
 
     func audit() async {
         guard !activity.isBusy else { return }
+        guard let operation = operationSettings(for: .audit) else {
+            announce()
+            return
+        }
+        await audit(operation)
+    }
+
+    private func audit(_ operation: OperationSettings) async {
+        guard !activity.isBusy else { return }
         activity = .auditing
         defer { activity = .idle }
 
-        let service = await kitchen.inspect(.audit)
+        let service = await kitchen(operation, recipes: recipes).inspect(.audit)
         apply(service)
-        announce(service)
+        await recordInventory(from: service, operation: operation)
+        announce()
     }
 
-    /// - Parameter only: nil converges everything the profile asks for.
+    /// - Parameter only: a single requested recipe; nil converges only recipes
+    ///   whose current report contains work FoodTruck can actually perform.
     func converge(only: String? = nil) async {
         guard !activity.isBusy else { return }
+        guard let operation = operationSettings(for: .converge) else {
+            announce()
+            return
+        }
+        let selected = only.map { Set([$0]) }
+            ?? Set(visibleRecipes.filter { canConverge(recipeID: $0.id) }.map(\.id))
+        guard !selected.isEmpty else { return }
         activity = .converging(recipe: only)
         defer { activity = .idle }
 
         do {
-            let service = try await kitchen.converge(only: only.map { [$0] })
+            let service = try await kitchen(operation, recipes: recipes)
+                .converge(only: selected)
             apply(service)
             // Recipes can install other recipes, so the catalogue may have grown.
             reload()
-            announce(service)
+            announce()
         } catch {
             // A graph that will not resolve is a FoodTruck bug, not a user
             // problem, and it must still arrive as a sentence rather than a
@@ -128,7 +172,111 @@ final class AppModel {
         lastRun = Date()
     }
 
-    private func announce(_ service: Service) {
+    private enum InventoryRecordOutcome: Sendable {
+        case unchanged
+        case recorded
+        case unavailable
+        case skipped
+        case writeFailed(String)
+        case historyFailed(String)
+    }
+
+    /// Keep the comparison point after presenting this audit. The snapshot came
+    /// from the audit itself, so recording never launches programs or scans the
+    /// machine a second time. CLI audits remain read-only because this is an app
+    /// lifecycle decision, not engine behavior.
+    private func recordInventory(
+        from service: Service, operation: OperationSettings
+    ) async {
+        guard let captured = service.results.first(where: { $0.recipe == "env.inventory" }),
+              let inventory = captured.inventory else { return }
+
+        // The attachment is transport, not UI state. Release the large scan as
+        // soon as it has crossed into the recording worker.
+        if var result = results["env.inventory"] {
+            result.inventory = nil
+            results["env.inventory"] = result
+        }
+
+        let store = InventoryStore(
+            root: locations.inventory, home: operation.profile.home,
+            systemRoot: operation.profile.systemRoot,
+            gitCandidates: operation.profile.inventory.gitCandidates)
+        let environment = operation.environment
+        let outcome = await Task.detached(priority: .utility) {
+            guard !inventory.probeRefused else { return InventoryRecordOutcome.skipped }
+            let needsWrite: Bool
+            switch store.read() {
+            case .invalid:
+                // Preserve the unreadable record for diagnosis rather than
+                // silently replacing the only comparison point.
+                return InventoryRecordOutcome.skipped
+            case .loaded(let previous):
+                needsWrite = previous != inventory
+            case .missing:
+                needsWrite = true
+            }
+
+            if needsWrite {
+                do {
+                    try store.write(inventory)
+                } catch {
+                    return .writeFailed(error.localizedDescription)
+                }
+            }
+
+            // Retry history even when the snapshot itself is unchanged. Git may
+            // have been unavailable, or a previous commit may have failed after
+            // the record was written; equality of JSON does not prove history is
+            // complete.
+            let commit = await store.commit(
+                message: "\(inventory.host.describe) — "
+                    + "\(inventory.environmentTools.count) programs, "
+                    + "\(inventory.unmanaged.count) unmanaged",
+                environment: environment)
+            switch commit {
+            case .recorded:
+                return .recorded
+            case .unchanged:
+                return .unchanged
+            case .unavailable:
+                return .unavailable
+            case .failed(let detail):
+                return .historyFailed(
+                    detail.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }.value
+
+        switch outcome {
+        case .writeFailed(let detail):
+            appendInventoryHistoryNotice(
+                id: "inventory.recordFailed",
+                title: "finding.inventory.recordFailed",
+                detail: detail,
+                remedy: "finding.inventory.recordFailed.remedy")
+        case .historyFailed(let detail):
+            appendInventoryHistoryNotice(
+                id: "inventory.historyFailed",
+                title: "finding.inventory.historyFailed",
+                detail: detail,
+                remedy: "finding.inventory.historyFailed.remedy")
+        case .unchanged, .recorded, .unavailable, .skipped:
+            break
+        }
+    }
+
+    private func appendInventoryHistoryNotice(
+        id: String, title: String, detail: String, remedy: String
+    ) {
+        guard var result = results["env.inventory"] else { return }
+        result.report.findings.removeAll { $0.id == id }
+        result.report.findings.append(Finding(
+            id: id, severity: .notice, title: title,
+            observed: detail, fixable: false, remedy: remedy, section: .history))
+        results["env.inventory"] = result
+    }
+
+    private func announce() {
         // Spoken by VoiceOver, so it says the outcome rather than describing the
         // screen: someone who cannot see the table still learns what happened.
         //
@@ -136,12 +284,12 @@ final class AppModel {
         // summary does. "Everything is where it should be" was removed from the
         // screen and left here, which left the overclaim in place for exactly
         // the people who cannot check it against the rest of the window.
-        announcement = needingAttention == 0
+        announcement = problemCount == 0
             ? t("a11y.announce.clean")
             : t("a11y.announce.drift", [
-                "drift": String(needingAttention),
-                "blocked": String(service.blocked.count),
-                "failed": String(service.failed.count),
+                "drift": String(driftCount),
+                "blocked": String(blockedCount),
+                "failed": String(failedCount),
               ])
     }
 
@@ -150,9 +298,20 @@ final class AppModel {
     func outcome(for id: String) -> VerbOutcome? { results[id]?.outcome }
     func findings(for id: String) -> [Finding] { results[id]?.report.findings ?? [] }
 
-    var needingAttention: Int {
+    var driftCount: Int {
         visibleRecipes.filter { results[$0.id]?.outcome == .drift }.count
     }
+    var blockedCount: Int {
+        visibleRecipes.filter { results[$0.id]?.outcome == .blocked }.count
+    }
+    var failedCount: Int {
+        let recipeFailures = visibleRecipes.filter {
+            if case .failed = results[$0.id]?.outcome { return true }
+            return false
+        }.count
+        return recipeFailures + loadFaults.count + (housekeepingFault == nil ? 0 : 1)
+    }
+    var problemCount: Int { driftCount + blockedCount + failedCount }
     var hasAnyResult: Bool { !results.isEmpty }
 
     /// Predicates that passed because something was verified. Deliberately not
@@ -167,12 +326,16 @@ final class AppModel {
         }
     }
 
+    /// One rule for both Fix controls: only required work which this recipe can
+    /// actually resolve counts. A merely informational notice never enables it.
+    func canConverge(recipeID: String) -> Bool {
+        guard let result = results[recipeID], result.outcome == .drift else { return false }
+        return !result.report.fixableActionFindings.isEmpty
+    }
+
     /// Whether converging everything would actually do anything, so the primary
     /// button can be disabled rather than doing nothing and looking broken.
     var hasFixableWork: Bool {
-        visibleRecipes.contains { recipe in
-            guard let result = results[recipe.id], result.outcome == .drift else { return false }
-            return result.report.findings.contains(where: \.fixable)
-        }
+        visibleRecipes.contains { canConverge(recipeID: $0.id) }
     }
 }

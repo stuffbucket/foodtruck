@@ -9,7 +9,7 @@ extension Inventory {
     /// managed one moved somewhere unusual reads as whatever the directory
     /// above it happens to be called. Neither is a good enough answer about a
     /// tool someone is trying to keep pinned, so for a declared and short list
-    /// -- `Inventory.interesting` -- FoodTruck runs the program and believes
+    /// in the resolved settings profile, FoodTruck runs the program and believes
     /// what it says instead.
     ///
     /// What keeps this defensible is the boundary, not the act. Executing a
@@ -25,6 +25,10 @@ extension Inventory {
     /// behind the timeout while the next pass began. Four at a time costs a
     /// fraction of a second on a first run and cannot do that.
     static let probeWindow = 4
+    static let probeTimeout: Double = 3
+    /// Independent of configurable policy: a bad eligibility gate still cannot
+    /// launch an unbounded number of distinct programs.
+    static let probeCeiling = 256
 
     /// Ask the tools we care about what version they are, reusing anything
     /// already known.
@@ -37,11 +41,13 @@ extension Inventory {
     ///   processes.
     public func probingVersions(
         home: URL, environment: [String: String],
-        systemRoot: URL = URL(filePath: "/"), timeout: Double = 3,
+        settings: ResolvedInventorySettings, systemRoot: URL,
         reusing previous: Inventory? = nil
     ) async -> Inventory {
-        let homePath = home.standardizedFileURL.path
+        let homePath = (try? CanonicalPath.resolve(home).path)
+            ?? home.standardizedFileURL.path
         let developer = Self.developerDirectory(systemRoot: systemRoot)
+        let eligibleNames = Set(settings.probes.names)
 
         var known: [String: Installed] = [:]
         for tool in previous?.tools ?? [] where tool.versionSource == .probed {
@@ -49,22 +55,74 @@ extension Inventory {
         }
 
         var updated = self
-        var candidates: [(index: Int, target: String)] = []
+        var candidateOrder: [String] = []
+        var candidateIndices: [String: [Int]] = [:]
         for index in tools.indices {
             let tool = tools[index]
-            guard let target = probeTarget(for: tool, home: homePath, systemRoot: systemRoot,
-                                           developerDirectory: developer) else { continue }
+            guard let target = probeTarget(
+                for: tool, eligibleNames: eligibleNames, home: homePath,
+                systemRoot: systemRoot, developerDirectory: developer
+            ) else { continue }
             if let cached = known[tool.path], cached.stamp != nil, cached.stamp == tool.stamp {
                 updated.tools[index].version = cached.version
                 updated.tools[index].versionSource = .probed
             } else {
-                candidates.append((index, target))
+                if candidateIndices[target] == nil { candidateOrder.append(target) }
+                candidateIndices[target, default: []].append(index)
             }
         }
-        guard !candidates.isEmpty else { return updated }
-        // The ceiling. Nothing below this line runs if the gate produced more
-        // work than the declared list could possibly justify.
-        guard candidates.count <= Self.probeCeiling else {
+
+        // Managers are reconstructed by the directory scan, so their versions
+        // need the same cache treatment and the same request batch as programs.
+        // A manager cache hit is valid only while the executable stamp matches;
+        // evidence directories alone survive in-place upgrades.
+        let toolsByPath = Dictionary(
+            updated.tools.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let oldManagers = Dictionary(
+            (previous?.managers ?? []).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first })
+        var managerTargets: [String: String] = [:]
+        var managerTargetOrder: [String] = []
+        for index in updated.managers.indices {
+            let manager = updated.managers[index]
+            let target: String?
+            if let tool = toolsByPath[manager.evidence] {
+                updated.managers[index].stamp = tool.stamp
+                if tool.versionSource == .probed {
+                    updated.managers[index].version = tool.version
+                    continue
+                }
+                target = Self.gatedProbeTarget(
+                    path: Self.expand(tool.path, home: homePath), name: tool.name,
+                    shim: tool.shim, home: homePath, systemRoot: systemRoot,
+                    developerDirectory: developer)
+            } else {
+                target = Self.managerProbeTarget(
+                    for: manager, home: homePath, settings: settings,
+                    systemRoot: systemRoot, developerDirectory: developer)
+                updated.managers[index].stamp = target.flatMap(Self.stamp(of:))
+            }
+
+            if let old = oldManagers[manager.id], old.evidence == manager.evidence,
+               old.stamp != nil, old.stamp == updated.managers[index].stamp,
+               old.version != nil {
+                updated.managers[index].version = old.version
+                continue
+            }
+            if let target {
+                managerTargets[manager.id] = target
+                if !managerTargetOrder.contains(target) { managerTargetOrder.append(target) }
+            }
+        }
+        for target in managerTargetOrder where candidateIndices[target] == nil
+            && !candidateOrder.contains(target) {
+            candidateOrder.append(target)
+        }
+
+        guard !candidateOrder.isEmpty else { return updated }
+        // The ceiling is compiled independently of every configurable list and
+        // covers tool probes and directory-only manager probes together.
+        guard candidateOrder.count <= Self.probeCeiling else {
             updated.probeRefused = true
             return updated
         }
@@ -87,47 +145,53 @@ extension Inventory {
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         var env = environment
+        // A program we are only asking the version of has no business knowing
+        // where FoodTruck keeps anything, or seeing the variables which chose
+        // configured scan paths. Remove those inputs before restoring the
+        // intentionally isolated HOME and XDG values below.
+        for key in env.keys where key.hasPrefix("FOODTRUCK_")
+            || settings.pathSourceEnvironment.contains(key) {
+            env.removeValue(forKey: key)
+        }
         env["HOME"] = scratch.path
         for key in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
             env[key] = scratch.path
         }
-        // A program we are only asking the version of has no business knowing
-        // where FoodTruck keeps anything.
-        for key in env.keys where key.hasPrefix("FOODTRUCK_") { env.removeValue(forKey: key) }
 
-        let probed: [Int: String] = await withTaskGroup(
-            of: (Int, String?).self
+        let probed: [String: String] = await withTaskGroup(
+            of: (String, String?).self
         ) { group in
-            var found: [Int: String] = [:]
+            var found: [String: String] = [:]
             var next = 0
             // A fixed window rather than one task per candidate. Start at most
             // `probeWindow`, and only add another as one finishes.
             func start() {
-                guard next < candidates.count else { return }
-                let (index, target) = candidates[next]
+                guard next < candidateOrder.count else { return }
+                let target = candidateOrder[next]
                 next += 1
                 group.addTask {
-                    (index, await Self.version(ofProgramAt: target,
-                                               environment: env,
-                                               workingDirectory: scratch,
-                                               timeout: timeout))
+                    (target, await Self.version(ofProgramAt: target,
+                                                environment: env,
+                                                workingDirectory: scratch,
+                                                timeout: Self.probeTimeout))
                 }
             }
-            for _ in 0..<Swift.min(Self.probeWindow, candidates.count) { start() }
-            while let (index, version) = await group.next() {
-                if let version { found[index] = version }
+            for _ in 0..<Swift.min(Self.probeWindow, candidateOrder.count) { start() }
+            while let (target, version) = await group.next() {
+                if let version { found[target] = version }
                 start()
             }
             return found
         }
 
-        for (index, version) in probed {
-            updated.tools[index].version = version
-            updated.tools[index].versionSource = .probed
+        for (target, version) in probed {
+            for index in candidateIndices[target] ?? [] {
+                updated.tools[index].version = version
+                updated.tools[index].versionSource = .probed
+            }
         }
-        updated.managers = await updated.managerVersions(
-            environment: env, workingDirectory: scratch,
-            home: homePath, timeout: timeout)
+        updated.managers = updated.managerVersions(
+            probedTargets: probed, managerTargets: managerTargets)
         return updated
     }
 
@@ -143,48 +207,82 @@ extension Inventory {
     /// A shell function is left without one, and says so. There is no binary
     /// to ask, and sourcing a user's shell files to find out would be running
     /// their startup configuration to satisfy a curiosity.
-    func managerVersions(
-        environment: [String: String], workingDirectory: URL,
-        home: String, timeout: Double
-    ) async -> [Manager] {
-        var resolved: [Manager] = []
-        // `path` is what makes an `Installed` unique, so this is a lookup
-        // rather than a search -- and doing it as a search compares full path
-        // strings against every tool on the machine, once per manager.
-        let byPath = Dictionary(tools.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        for var manager in managers {
-            guard !manager.shellFunction else { resolved.append(manager); continue }
-
+    func managerVersions(probedTargets: [String: String],
+                         managerTargets: [String: String]) -> [Manager] {
+        let byPath = Dictionary(
+            tools.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        return managers.map { manager in
+            var manager = manager
             if let known = byPath[manager.evidence], known.versionSource == .probed {
                 manager.version = known.version
-            } else if let spec = Self.managerCatalogue.first(where: { $0.id == manager.id }),
-                      let binary = spec.binaries.first {
-                // Found as a directory rather than on PATH: look inside it.
-                let candidate = Self.expand(manager.evidence, home: home)
-                    + "/bin/" + binary
-                if FileManager.default.isExecutableFile(atPath: candidate) {
-                    manager.version = await Self.version(
-                        ofProgramAt: candidate, environment: environment,
-                        workingDirectory: workingDirectory, timeout: timeout)
-                }
+            } else if let target = managerTargets[manager.id],
+                      let version = probedTargets[target] {
+                manager.version = version
             }
-            resolved.append(manager)
+            return manager
         }
-        return resolved
     }
 
-    /// The most programs one pass may run, whatever the rest of this file
-    /// believes.
-    ///
-    /// A second bound, independent of every decision below it. `probeTarget`
-    /// decides what is safe to run; a single wrong `return` inside it turned
-    /// "run the declared list" into "run everything on this machine", and one
-    /// character is all it took. A ceiling cannot be inverted by that mistake,
-    /// because it is derived from the size of the declared list rather than
-    /// from any of the reasoning about it. A candidate set larger than this is
-    /// a bug in the gate, not a machine with unusual software, and the correct
-    /// response to a bug in the gate is to run nothing at all.
-    static var probeCeiling: Int { interesting.count }
+    /// An executable inside a manager directory that was itself the evidence.
+    /// Returning only paths declared through settings keeps relocated homes
+    /// usable without turning directory discovery into a command search.
+    private static func managerProbeTarget(
+        for manager: Manager, home: String, settings: ResolvedInventorySettings,
+        systemRoot: URL, developerDirectory: String?
+    ) -> String? {
+        guard !manager.shellFunction,
+              let declaration = settings.managers.first(where: { $0.id == manager.id }),
+              let directory = declaration.directories.first(where: {
+                  abbreviate($0.path, home: home) == manager.evidence
+              }) else { return nil }
+        for binary in declaration.binaries {
+            let candidate = directory.appending(path: "bin/\(binary)").path
+            guard FileManager.default.isExecutableFile(atPath: candidate) else { continue }
+            if let target = gatedProbeTarget(
+                path: candidate, name: binary, shim: false, home: home,
+                systemRoot: systemRoot, developerDirectory: developerDirectory) {
+                return target
+            }
+        }
+        return nil
+    }
+
+    /// The executable half of the probe gate, shared by scanned tools and
+    /// managers discovered only from their configured directories.
+    private static func gatedProbeTarget(
+        path: String, name: String, shim: Bool, home: String, systemRoot: URL,
+        developerDirectory: String?
+    ) -> String? {
+        guard !shim,
+              let candidate = containedExecutable(path, home: home, systemRoot: systemRoot)
+        else { return nil }
+        guard isDeveloperStub(candidate, systemRoot: systemRoot) else { return candidate }
+
+        // Resolve the stub only to a real developer binary that remains inside
+        // the same sealed machine. A crafted xcode-select link must not turn a
+        // safe refusal into execution on the host.
+        guard let developerDirectory else { return nil }
+        let real = URL(filePath: developerDirectory).appending(path: "usr/bin/\(name)").path
+        return containedExecutable(real, systemRoot: systemRoot)
+    }
+
+    /// Canonicalize before checking the boundary. `isExecutableFile` follows
+    /// symlinks, so a lexical containment check would approve an in-root name
+    /// that actually executes a program outside the sealed system.
+    private static func containedExecutable(
+        _ path: String, home: String? = nil, systemRoot: URL
+    ) -> String? {
+        let boundary = InventoryBoundary(
+            home: home.map { URL(filePath: $0) }, systemRoot: systemRoot)
+        guard let candidate = try? CanonicalPath.resolve(URL(filePath: path)).path else {
+            return nil
+        }
+        guard boundary.containsCanonical(candidate),
+              FileManager.default.isExecutableFile(atPath: candidate) else {
+            return nil
+        }
+        return candidate
+    }
 
     /// The path to actually execute for this tool, or nil if it must not be
     /// run at all.
@@ -192,7 +290,7 @@ extension Inventory {
     /// One decision point, because two of them is how the last accident
     /// happened. It answers three separate questions.
     ///
-    /// Is it declared? Only names on `interesting` are ever run.
+    /// Is it declared? Only names in the resolved probe policy are ever run.
     ///
     /// Is it a manager's shim? Running `mise/shims/node --version` does not
     /// report a version, it makes mise install whichever Node the surrounding
@@ -203,22 +301,13 @@ extension Inventory {
     /// Is it one of Apple's developer-tool stubs? Those are never run either,
     /// but unlike a manager's shim there is something better to run instead.
     func probeTarget(
-        for tool: Installed, home: String, systemRoot: URL, developerDirectory: String?
+        for tool: Installed, eligibleNames: Set<String>, home: String,
+        systemRoot: URL, developerDirectory: String?
     ) -> String? {
-        guard Self.interesting.contains(tool.name) else { return nil }
-        if tool.shim { return nil }
-
-        let path = Self.expand(tool.path, home: home)
-        guard Self.isDeveloperStub(path, systemRoot: systemRoot) else { return path }
-
-        // A stub is not the tool; it is a forwarder. Run what it forwards to,
-        // and only if that is actually there. A stub with nothing behind it is
-        // precisely what puts up "the cmpdylib command requires the command
-        // line developer tools" -- and that dialog is not a question anybody
-        // can be expected to answer, so it must never be asked.
-        guard let developerDirectory else { return nil }
-        let real = developerDirectory + "/usr/bin/" + tool.name
-        return FileManager.default.isExecutableFile(atPath: real) ? real : nil
+        guard eligibleNames.contains(tool.name) else { return nil }
+        return Self.gatedProbeTarget(
+            path: Self.expand(tool.path, home: home), name: tool.name, shim: tool.shim,
+            home: home, systemRoot: systemRoot, developerDirectory: developerDirectory)
     }
 
     /// One of Apple's developer-tool stubs.
@@ -233,7 +322,10 @@ extension Inventory {
     /// Restricted to the system directories so that a package manager which
     /// happens to hard link something is not mistaken for Apple.
     static func isDeveloperStub(_ path: String, systemRoot: URL) -> Bool {
-        let root = systemRoot.standardizedFileURL.path
+        guard let root = try? CanonicalPath.resolve(systemRoot).path,
+              let path = try? CanonicalPath.resolve(URL(filePath: path)).path else {
+            return true
+        }
         let base = root == "/" ? "" : root
         let system = ["/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/"].map { base + $0 }
         guard system.contains(where: { path.hasPrefix($0) }) else { return false }
@@ -257,15 +349,50 @@ extension Inventory {
     /// find out whether invoking them is safe.
     static func developerDirectory(systemRoot: URL) -> String? {
         let fm = FileManager.default
-        let link = systemRoot.appending(path: "var/db/xcode_select_link")
-        if let destination = try? fm.destinationOfSymbolicLink(atPath: link.path),
-           fm.fileExists(atPath: destination + "/usr/bin") {
-            return destination
+        guard let root = try? CanonicalPath.resolve(systemRoot) else { return nil }
+        let rootPath = root.path
+
+        func isContained(_ url: URL) -> Bool {
+            let path = url.path
+            return rootPath == "/"
+                ? path.hasPrefix("/")
+                : path == rootPath || path.hasPrefix(rootPath + "/")
         }
+
+        func existingDeveloper(at url: URL) -> String? {
+            guard let directory = try? CanonicalPath.resolve(url),
+                  isContained(directory),
+                  let binaries = try? CanonicalPath.resolve(
+                    directory.appending(path: "usr/bin")) else { return nil }
+            var isDirectory: ObjCBool = false
+            guard isContained(binaries),
+                  fm.fileExists(atPath: binaries.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else { return nil }
+            return directory.path
+        }
+
+        // Resolve the link's parent first. Otherwise a symlinked `var` or `db`
+        // could make even reading xcode_select_link escape a sealed test root.
+        let lexicalLink = root.appending(path: "var/db/xcode_select_link")
+        if let linkParent = try? CanonicalPath.resolve(
+            lexicalLink.deletingLastPathComponent()), isContained(linkParent) {
+            let link = linkParent.appending(path: lexicalLink.lastPathComponent)
+            if let destination = try? fm.destinationOfSymbolicLink(atPath: link.path) {
+                // Absolute targets keep their filesystem meaning; relative ones
+                // are interpreted from the link's directory. Both are accepted
+                // only after canonicalization proves they remain under root.
+                let target = destination.hasPrefix("/")
+                    ? URL(filePath: destination)
+                    : linkParent.appending(path: destination)
+                if let found = existingDeveloper(at: target) { return found }
+            }
+        }
+
         for fallback in ["Library/Developer/CommandLineTools",
                          "Applications/Xcode.app/Contents/Developer"] {
-            let url = systemRoot.appending(path: fallback)
-            if fm.fileExists(atPath: url.appending(path: "usr/bin").path) { return url.path }
+            if let found = existingDeveloper(at: root.appending(path: fallback)) {
+                return found
+            }
         }
         return nil
     }
